@@ -4162,9 +4162,9 @@ function SettingsPanel({ scene, api, onClose }) {
         if (Number.isFinite(n)) api.updateSettings({ autoSaveEvery: Math.min(100, Math.max(0, n)) });
       }
     }
-  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5FEB\u7167\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5FEB\u7167\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u89D2\u8272\u540D\u79F0/\u989C\u8272\u5728\u7F16\u8F91\u6A21\u5F0F\u4E2D\u4FEE\u6539\u3002"));
+  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5FEB\u7167\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5FEB\u7167\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u5B58\u6863/\u8BFB\u6863\u4F1A\u5728\u56DE\u590D\u5B8C\u5168\u843D\u5B9A\u540E\u6267\u884C\uFF0C\u4E0D\u6253\u65AD\u5BF9\u8BDD\u3002"));
 }
-function SavePanel({ api, mode, onClose }) {
+function SavePanel({ api, mode, onClose, running }) {
   const [index, setIndex] = (0, import_react4.useState)(() => loadSaveIndex(api));
   const [current, setCurrent] = (0, import_react4.useState)(() => loadCurrentSession(api));
   const [busy, setBusy] = (0, import_react4.useState)(false);
@@ -4200,11 +4200,19 @@ function SavePanel({ api, mode, onClose }) {
     setError(null);
     setNotice(null);
     try {
+      if (typeof api?.waitSettled === "function") {
+        setNotice("\u6B63\u5728\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u2026");
+        const gate = await api.waitSettled({ quietMs: 2500, timeoutMs: 15e3 });
+        if (!gate.settled) throw new Error("\u56DE\u590D\u5C1A\u672A\u5B8C\u5168\u843D\u5B9A\uFF0C\u8BF7\u7A0D\u540E\u518D\u5B58\u6863");
+        if (!gate.completed) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u56DE\u5408\uFF0C\u5148\u804A\u51E0\u53E5\u518D\u5B58\u6863\u5427");
+      }
+      setNotice(null);
       const result = await api.saveSlot();
       setNotice("\u5DF2\u521B\u5EFA\u5FEB\u7167\u300C" + result.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
       refresh();
     } catch (cause) {
       setError(causeText2(cause));
+      setNotice(null);
     }
     setBusy(false);
   };
@@ -4269,9 +4277,9 @@ function SavePanel({ api, mode, onClose }) {
         onClick: isAuto ? void 0 : () => beginRename(s)
       },
       s.title
-    ), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.updatedAt)), isAuto && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: () => load(s.id) }, "\u8BFB\u53D6"));
+    ), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.updatedAt)), isAuto && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy || running === true, onClick: () => load(s.id) }, "\u8BFB\u53D6"));
   });
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u51BB\u7ED3\u5F53\u524D\u8FDB\u5EA6\u7684\u5FEB\u7167\u300C", saveRootPrefix(index.rootTitle), "-save\u2026\u300D\uFF0C\u4E4B\u540E\u8BFB\u6863\u6C38\u8FDC\u4E0D\u4F1A\u6539\u53D8\u5B83\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u4ECE\u5FEB\u7167\u91CD\u5F00\u4E00\u6761\u4E16\u754C\u7EBF\uFF0C\u65E7\u4E16\u754C\u7EBF\u9500\u6BC1\u3002\u4E4B\u540E\u7684\u5BF9\u8BDD\u53D1\u751F\u5728\u65B0\u7EBF\u4E0A\u3002"), index.rootTitle !== "" && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-meta" }, "\u4E3B\u7EBF\u7A0B\u300C", index.rootTitle, "\u300D"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863"), index.autos.length > 0 ? renderSlotRows(index.autos, true) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863"), index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), renderSlotRows(index.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863\uFF08", nextTitle, "\uFF09"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
+  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u51BB\u7ED3\u5F53\u524D\u8FDB\u5EA6\u7684\u5FEB\u7167\u300C", saveRootPrefix(index.rootTitle), "-save\u2026\u300D\uFF0C\u4E4B\u540E\u8BFB\u6863\u6C38\u8FDC\u4E0D\u4F1A\u6539\u53D8\u5B83\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u4ECE\u5FEB\u7167\u91CD\u5F00\u4E00\u6761\u4E16\u754C\u7EBF\uFF0C\u65E7\u4E16\u754C\u7EBF\u9500\u6BC1\u3002\u4E4B\u540E\u7684\u5BF9\u8BDD\u53D1\u751F\u5728\u65B0\u7EBF\u4E0A\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), index.rootTitle !== "" && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-meta" }, "\u4E3B\u7EBF\u7A0B\u300C", index.rootTitle, "\u300D"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863"), index.autos.length > 0 ? renderSlotRows(index.autos, true) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863"), index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), renderSlotRows(index.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863\uFF08", nextTitle, "\uFF09"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
 }
 function loadSaveIndex(api) {
   try {
@@ -4367,9 +4375,9 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   const turns = typeof sessionStats?.turns === "number" ? sessionStats.turns : playerTurns;
   const autoSessionId = typeof api?.currentSessionId === "function" ? api.currentSessionId() ?? "default" : typeof sessionId === "string" && sessionId !== "" ? sessionId : "default";
   const autoKey = "gal-view:auto:" + autoSessionId;
-  const autoSaveRef = (0, import_react4.useRef)({ key: autoKey, baseline: null, saving: false });
+  const autoSaveRef = (0, import_react4.useRef)({ key: autoKey, baseline: null, saving: false, trying: false });
   if (autoSaveRef.current.key !== autoKey) {
-    autoSaveRef.current = { key: autoKey, baseline: null, saving: false };
+    autoSaveRef.current = { key: autoKey, baseline: null, saving: false, trying: false };
   }
   if (autoSaveRef.current.baseline === null) {
     let stored = null;
@@ -4380,22 +4388,39 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
     }
     autoSaveRef.current.baseline = stored ?? turns;
   }
-  const autoTimerRef = (0, import_react4.useRef)(null);
+  const runningRef = (0, import_react4.useRef)(false);
+  runningRef.current = running;
+  const [settleTick, setSettleTick] = (0, import_react4.useState)(0);
   (0, import_react4.useEffect)(() => {
-    if (autoTimerRef.current !== null) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
+    if (typeof api?.onSessions !== "function") return void 0;
+    return api.onSessions(() => setSettleTick((t) => t + 1));
+  }, [api]);
+  (0, import_react4.useEffect)(() => {
     const ref = autoSaveRef.current;
-    if (autoSaveEvery <= 0 || ref.saving) return;
+    if (autoSaveEvery <= 0 || ref.saving || ref.trying) return;
     if (turns - ref.baseline < autoSaveEvery) return;
     if (running || Array.isArray(pending) && pending.length > 0) return;
-    if (typeof api?.autoSave !== "function" || api.hasSessionsService() !== true) return;
-    autoTimerRef.current = setTimeout(() => {
-      autoTimerRef.current = null;
+    if (typeof api?.autoSave !== "function" || typeof api?.waitSettled !== "function" || api.hasSessionsService() !== true) return;
+    const currentTurns = turns;
+    const currentEvery = autoSaveEvery;
+    ref.trying = true;
+    api.waitSettled({
+      quietMs: 2500,
+      timeoutMs: 3e4,
+      shouldContinue: () => runningRef.current === false && autoSaveRef.current.key === autoKey
+    }).then((gate) => {
       const r = autoSaveRef.current;
-      if (r.saving) return;
-      r.baseline = turns;
+      r.trying = false;
+      if (r.saving || r.key !== autoKey) return;
+      if (!gate.settled) {
+        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u56DE\u5408\u672A\u843D\u5B9A,\u8DF3\u8FC7\u672C\u8F6E(\u4E0B\u6B21\u7ED3\u7B97\u91CD\u8BD5)");
+        return;
+      }
+      if (!gate.completed) {
+        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u5C1A\u65E0\u5DF2\u5B8C\u6210\u56DE\u5408,\u8DF3\u8FC7");
+        return;
+      }
+      r.baseline = currentTurns;
       try {
         window.localStorage.setItem(autoKey, String(r.baseline));
       } catch {
@@ -4404,22 +4429,36 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       api.autoSave().then(
         () => {
           r.saving = false;
-          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + autoSaveEvery + " \u8F6E)");
+          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + currentEvery + " \u8F6E)");
         },
         (cause) => {
           r.saving = false;
-          r.baseline = Math.max(0, r.baseline - autoSaveEvery);
+          r.baseline = Math.max(0, r.baseline - currentEvery);
           console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u5931\u8D25:", cause);
         }
       );
-    }, 2500);
-    return () => {
-      if (autoTimerRef.current !== null) {
-        clearTimeout(autoTimerRef.current);
-        autoTimerRef.current = null;
+    });
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick]);
+  const nodesCount = Array.isArray(nodes) ? nodes.length : 0;
+  const nodesWatchRef = (0, import_react4.useRef)({ count: null, session: null, last: 0 });
+  (0, import_react4.useEffect)(() => {
+    const w = nodesWatchRef.current;
+    if (w.count === null || w.session !== autoSessionId) {
+      w.count = nodesCount;
+      w.session = autoSessionId;
+      return;
+    }
+    const prev = w.count;
+    w.count = nodesCount;
+    if (!running && prev > 6 && nodesCount < prev / 2) {
+      const now = Date.now();
+      if (now - w.last > 15e3 && typeof api?.reopenCurrent === "function") {
+        w.last = now;
+        console.warn("[gal-view:watchdog] \u68C0\u6D4B\u5230\u5BF9\u8BDD\u884C\u9AA4\u51CF " + prev + " \u2192 " + nodesCount + ",\u91CD\u88C5\u4F1A\u8BDD\u7A97\u53E3");
+        void api.reopenCurrent();
       }
-    };
-  }, [turns, autoSaveEvery, running, pending, api, autoKey]);
+    }
+  }, [nodesCount, running, autoSessionId, api]);
   const personaCfg = (0, import_react4.useMemo)(() => normalizePersona(scene.settings.persona), [scene.settings.persona]);
   const pendingStyle = scene.settings.pendingStyle ?? null;
   const rootStyle = pendingStyle !== null && typeof pendingStyle === "object" ? {
@@ -4766,7 +4805,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       fontsMap: fonts.map,
       onExitEditor: () => setMode("game")
     }
-  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false) }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null) }));
+  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false) }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running }));
 }
 
 // .dsh-plugin/client/SettingsTab.jsx
@@ -4834,6 +4873,55 @@ function extractAssets(raw) {
 }
 function createIdbAssets(dbName = "gal-view") {
   return createIdbStore(dbName, "assets");
+}
+
+// .dsh-plugin/client/settle.mjs
+function settledOf(entry) {
+  if (entry === null || entry === void 0) return false;
+  return entry.running === false;
+}
+function hasCompletedTurns(entry) {
+  if (entry === null || entry === void 0) return false;
+  return entry.completed === true && entry.blank !== true;
+}
+async function waitSettled(opts) {
+  const {
+    getSnapshot,
+    subscribe,
+    quietMs = 2500,
+    timeoutMs = 3e4,
+    shouldContinue,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  } = opts ?? {};
+  if (typeof getSnapshot !== "function") {
+    return { settled: false, completed: false, aborted: false };
+  }
+  const started = Date.now();
+  let lastChange = started;
+  const off = typeof subscribe === "function" ? subscribe(() => {
+    lastChange = Date.now();
+  }) : null;
+  try {
+    for (; ; ) {
+      if (typeof shouldContinue === "function" && shouldContinue() === false) {
+        return { settled: false, completed: false, aborted: true };
+      }
+      const snap = getSnapshot();
+      const current = snap !== null && typeof snap === "object" && typeof snap.current === "string" && snap.current !== "" ? snap.current : null;
+      const entry = current === null ? null : snap.byId?.[current] ?? null;
+      const settled = settledOf(entry);
+      const completed = hasCompletedTurns(entry);
+      if (settled && Date.now() - lastChange >= quietMs) {
+        return { settled: true, completed, aborted: false };
+      }
+      if (Date.now() - started >= timeoutMs) {
+        return { settled: false, completed, aborted: false };
+      }
+      await sleep(150);
+    }
+  } finally {
+    if (off !== null) off();
+  }
 }
 
 // gal-scene.json
@@ -5258,23 +5346,85 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       return { rootId: current2, rootTitle, saves: reg.saves, autos: reg.autos };
     },
-    /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。 */
+    /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。
+     * 护栏：官方在「当前会话被归档」时会直接 clear 当前选择（对话栏整个空白），
+     * 因此目标 id 是当前会话时直接拒绝，绝不冒险。 */
     async archiveSessionQuiet(sessionId2) {
+      if (this.currentSessionId() === sessionId2) {
+        console.warn("[gal-view:save] \u62D2\u7EDD\u5F52\u6863\u5F53\u524D\u4F1A\u8BDD(\u5B98\u65B9\u4F1A\u56E0\u6B64\u6E05\u7A7A\u5BF9\u8BDD):", sessionId2);
+        return false;
+      }
       const op = workspacesSvc?.archiveSession ?? sessionsSvc?.archiveSession;
       if (typeof op === "function") {
         try {
           await op.call(workspacesSvc?.archiveSession !== void 0 ? workspacesSvc : sessionsSvc, sessionId2);
+          return true;
         } catch {
         }
       }
+      return false;
     },
-    /** 快照式创建：fork 当前会话 + 命名 + 归档 + 入名录。 */
+    /** 落定闸门：等主机摘要 running=false 且连续 quietMs 无列表变化。
+     * 返回 { settled, completed, aborted }；服务缺失时 settled=false。 */
+    async waitSettled(opts = {}) {
+      const list = sessionsSvc?.list;
+      if (list === null || list === void 0 || typeof list.getSnapshot !== "function") {
+        return { settled: false, completed: false, aborted: false };
+      }
+      return waitSettled({
+        getSnapshot: () => list.getSnapshot(),
+        subscribe: typeof list.subscribe === "function" ? (cb) => list.subscribe(cb) : null,
+        quietMs: typeof opts.quietMs === "number" ? opts.quietMs : 2500,
+        timeoutMs: typeof opts.timeoutMs === "number" ? opts.timeoutMs : 3e4,
+        shouldContinue: typeof opts.shouldContinue === "function" ? opts.shouldContinue : void 0
+      });
+    },
+    /** 轮询等待 list.current 变为指定 id（读档切换落地确认；上限 timeoutMs）。 */
+    async waitCurrentIs(id, timeoutMs = 2e3) {
+      const started = Date.now();
+      for (; ; ) {
+        if (this.currentSessionId() === id) return true;
+        if (Date.now() - started >= timeoutMs) return this.currentSessionId() === id;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    },
+    /** 重装当前会话窗口（看门狗用）：官方窗口被重装成不完整尾部时，
+     * resync 重置窗口并重拉基线（open 在已打开时是 no-op，不能恢复）。 */
+    async reopenCurrent() {
+      const id = this.currentSessionId();
+      if (id === null) return false;
+      try {
+        const session = sessionsSvc?.binding?.(id)?.session ?? null;
+        if (session !== null) {
+          if (typeof session.resync === "function") {
+            await session.resync();
+            return true;
+          }
+          if (typeof session.open === "function") {
+            await session.open();
+            return true;
+          }
+        }
+      } catch (cause) {
+        console.warn("[gal-view:watchdog] \u91CD\u88C5\u4F1A\u8BDD\u7A97\u53E3\u5931\u8D25:", cause);
+      }
+      return false;
+    },
+    /** 记录一次存档操作（看门狗据此判断"官方清空当前选择"是否是我们引发的）。 */
+    noteSaveOp() {
+      this._noteSaveOp?.();
+    },
+    /** 快照式创建：fork 当前会话 + 命名 + 归档 + 入名录。
+     * 调用方必须先过落定闸门（waitSettled）——对未落定的活跃会话 fork 会
+     * 打断官方会话窗口（对话整段消失）。 */
     async createSlot(title, auto) {
       const current2 = this.currentSessionId();
       if (current2 === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      console.info("[gal-view:save] createSlot \u5F00\u59CB:", title, "auto=" + String(auto === true));
       const snapshot = typeof sessionsSvc.list?.getSnapshot === "function" ? sessionsSvc.list.getSnapshot() : null;
       const rootTitle = this.rootTitleOf(current2, snapshot?.byId ?? {});
       const childId = await sessionsSvc.fork({ sessionId: current2 });
+      console.info("[gal-view:save] fork \u5B8C\u6210:", childId);
       try {
         const binding = sessionsSvc.binding?.(childId);
         const session = binding?.session ?? null;
@@ -5291,6 +5441,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       if (rootTitle !== "") reg.rootTitle = rootTitle;
       this.writeSlotsRegistry(reg);
+      this.noteSaveOp();
       return { title, childId };
     },
     /** 手动存档改名：仅中文/英文/数字/部分符号；更新名录 + 尝试同步会话标题（归档槽可能失败，忽略）。 */
@@ -5335,15 +5486,22 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const title = nextAutoTitle(prefix, reg.autos.map((s) => s.n));
       return this.createSlot(title, true);
     },
-    /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。 */
+    /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。
+     * 时序护栏：fork(槽) 不影响当前视图；open(子) 后轮询确认切换已落地
+     * （list.current === childId）再归档旧线——官方在"当前会话被归档"时会
+     * clear 当前选择，归档必须先确认切换完成。 */
     async loadSave(saveId) {
       if (!this.hasSessionsService()) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9");
       const oldCurrent = this.currentSessionId();
       if (oldCurrent === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
       const reg = this.readSlotsRegistry();
       const mainTitle = reg.rootTitle !== "" ? reg.rootTitle : this.rootTitleOf(oldCurrent, sessionsSvc?.list?.getSnapshot?.()?.byId ?? {});
+      console.info("[gal-view:save] load: fork \u69FD", saveId);
       const childId = await sessionsSvc.fork({ sessionId: saveId });
+      console.info("[gal-view:save] load: fork \u5B8C\u6210", childId);
       await sessionsSvc.open(childId);
+      const switched = await this.waitCurrentIs(childId, 2e3);
+      console.info("[gal-view:save] load: \u5207\u6362" + (switched ? "\u5DF2\u843D\u5730" : "\u672A\u786E\u8BA4") + ", child=" + childId);
       if (mainTitle !== "") {
         try {
           const binding = sessionsSvc.binding?.(childId);
@@ -5352,7 +5510,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         } catch {
         }
       }
-      await this.archiveSessionQuiet(oldCurrent);
+      if (this.currentSessionId() === oldCurrent) {
+        console.warn("[gal-view:save] load: \u5F53\u524D\u4F1A\u8BDD\u4ECD\u672A\u5207\u6362,\u653E\u5F03\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", oldCurrent);
+      } else {
+        await this.archiveSessionQuiet(oldCurrent);
+      }
+      this.noteSaveOp();
       return { childId };
     },
     /** LOAD：切换到指定会话（读档）。 */
@@ -5455,6 +5618,28 @@ function apply(ctx) {
   const history = createHistory(HISTORY_LIMIT);
   const historySource = createObservable({ undo: 0, redo: 0 });
   const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc);
+  let lastMainId = null;
+  let lastOpAt = 0;
+  api._noteSaveOp = () => {
+    lastOpAt = Date.now();
+    const cur = api.currentSessionId();
+    if (cur !== null) lastMainId = cur;
+  };
+  const offSelectionWatch = typeof sessionsSvc?.list?.subscribe === "function" ? sessionsSvc.list.subscribe(() => {
+    try {
+      const cur = api.currentSessionId();
+      if (cur !== null) {
+        lastMainId = cur;
+        return;
+      }
+      if (lastMainId !== null && Date.now() - lastOpAt < 8e3) {
+        console.warn("[gal-view:watchdog] \u5B98\u65B9\u6E05\u7A7A\u4E86\u5F53\u524D\u9009\u62E9,\u81EA\u52A8\u6062\u590D:", lastMainId);
+        sessionsSvc?.open?.(lastMainId);
+      }
+    } catch {
+    }
+  }) : null;
+  if (offSelectionWatch !== null) ctx.effect(() => offSelectionWatch, "gal-view: selection watchdog");
   const syncOfficialPlaceholder = () => {
     const name2 = assistantDisplayName(sceneSource.getSnapshot());
     const text = "\u4F60\u60F3\u548C" + name2 + "\u8BF4\u4EC0\u4E48\u5462\uFF1F";

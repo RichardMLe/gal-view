@@ -130,7 +130,7 @@ function SettingsPanel({ scene, api, onClose }) {
           }}
         />
       </label>
-      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」快照（0 = 关闭）；自动快照仅保留最新一个。角色名称/颜色在编辑模式中修改。</p>
+      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」快照（0 = 关闭）；自动快照仅保留最新一个。存档/读档会在回复完全落定后执行，不打断对话。</p>
     </div>
   )
 }
@@ -139,7 +139,7 @@ function SettingsPanel({ scene, api, onClose }) {
  * SAVE = 当前会话最后已完成回合冻结为快照槽（xx-saveN / xx-自动N），永不改变；
  * LOAD = 从槽派生新世界线 → 切换 → 销毁旧世界线（归档，列表消失）。
  * 宿主不支持会话服务时给出可读提示，不抛错。 */
-function SavePanel({ api, mode, onClose }) {
+function SavePanel({ api, mode, onClose, running }) {
   const [index, setIndex] = useState(() => loadSaveIndex(api))
   const [current, setCurrent] = useState(() => loadCurrentSession(api))
   const [busy, setBusy] = useState(false)
@@ -171,11 +171,21 @@ function SavePanel({ api, mode, onClose }) {
     setError(null)
     setNotice(null)
     try {
+      // 落定闸门：等主机摘要 running=false 且连续静默后才 fork——对未落定的
+      // 活跃会话 fork 会打断官方会话窗口（对话整段消失）。超时给出可读提示。
+      if (typeof api?.waitSettled === 'function') {
+        setNotice('正在等待回合落定…')
+        const gate = await api.waitSettled({ quietMs: 2500, timeoutMs: 15000 })
+        if (!gate.settled) throw new Error('回复尚未完全落定，请稍后再存档')
+        if (!gate.completed) throw new Error('还没有已完成的回合，先聊几句再存档吧')
+      }
+      setNotice(null)
       const result = await api.saveSlot()
       setNotice('已创建快照「' + result.title + '」（永久保存，读档也不会改变它）')
       refresh()
     } catch (cause) {
       setError(causeText(cause))
+      setNotice(null)
     }
     setBusy(false)
   }
@@ -237,7 +247,7 @@ function SavePanel({ api, mode, onClose }) {
         <span className="gv-saves-time">{formatTime(s.updatedAt)}</span>
         {isAuto && <span className="gv-saves-badge">自动</span>}
         {mode === 'load' && (
-          <button type="button" className="gv-btn" disabled={busy} onClick={() => load(s.id)}>读取</button>
+          <button type="button" className="gv-btn" disabled={busy || running === true} onClick={() => load(s.id)}>读取</button>
         )}
       </div>
     )
@@ -251,7 +261,7 @@ function SavePanel({ api, mode, onClose }) {
         </div>
         {mode === 'save'
           ? <p className="gv-saves-hint">存档 = 冻结当前进度的快照「{saveRootPrefix(index.rootTitle)}-save…」，之后读档永远不会改变它。</p>
-          : <p className="gv-saves-hint">读取存档 = 从快照重开一条世界线，旧世界线销毁。之后的对话发生在新线上。</p>}
+          : <p className="gv-saves-hint">读取存档 = 从快照重开一条世界线，旧世界线销毁。之后的对话发生在新线上。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
         {index.rootTitle !== '' && (
           <p className="gv-saves-meta">主线程「{index.rootTitle}」</p>
         )}
@@ -404,9 +414,9 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     ? (api.currentSessionId() ?? 'default')
     : (typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'default')
   const autoKey = 'gal-view:auto:' + autoSessionId
-  const autoSaveRef = useRef({ key: autoKey, baseline: null, saving: false })
+  const autoSaveRef = useRef({ key: autoKey, baseline: null, saving: false, trying: false })
   if (autoSaveRef.current.key !== autoKey) {
-    autoSaveRef.current = { key: autoKey, baseline: null, saving: false }
+    autoSaveRef.current = { key: autoKey, baseline: null, saving: false, trying: false }
   }
   if (autoSaveRef.current.baseline === null) {
     let stored = null
@@ -417,47 +427,81 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     // 无记录（新会话）→ 基线=当前回合数；有记录 → 沿用（切标签页/刷新不重置）。
     autoSaveRef.current.baseline = stored ?? turns
   }
-  const autoTimerRef = useRef(null)
+  // 落定闸门驱动：订阅会话列表变化作为重试节拍——自动存档条件满足但未落定时，
+  // 下一次列表变化（通常是回合真正结算）会再次触发检查。
+  const runningRef = useRef(false)
+  runningRef.current = running
+  const [settleTick, setSettleTick] = useState(0)
   useEffect(() => {
-    // 每次依赖变化先取消上一次的延迟(尾随去抖:以最后一次结算为准)。
-    if (autoTimerRef.current !== null) {
-      clearTimeout(autoTimerRef.current)
-      autoTimerRef.current = null
-    }
+    if (typeof api?.onSessions !== 'function') return undefined
+    return api.onSessions(() => setSettleTick(t => t + 1))
+  }, [api])
+  useEffect(() => {
     const ref = autoSaveRef.current
-    if (autoSaveEvery <= 0 || ref.saving) return
+    if (autoSaveEvery <= 0 || ref.saving || ref.trying) return
     if (turns - ref.baseline < autoSaveEvery) return
     if (running || (Array.isArray(pending) && pending.length > 0)) return
-    if (typeof api?.autoSave !== 'function' || api.hasSessionsService() !== true) return
-    // 回合结束后延迟 2.5s 再 fork:等会话完全落定(投影/分页窗口稳定)。
-    // 结算瞬间 fork 会触发官方会话投影重建,窗口外的行被隐藏 → 对话栏
-    // 整段消失(只剩窗口内工具调用)。手动存档在稳定状态点操作,无此问题。
-    autoTimerRef.current = setTimeout(() => {
-      autoTimerRef.current = null
+    if (typeof api?.autoSave !== 'function' || typeof api?.waitSettled !== 'function' || api.hasSessionsService() !== true) return
+    const currentTurns = turns
+    const currentEvery = autoSaveEvery
+    ref.trying = true
+    // 落定闸门：等主机摘要 running=false 且连续 2.5s 无会话列表变化后才 fork。
+    // 不再盲等固定时长——对未落定的活跃会话 fork 会打断官方会话窗口
+    // （对话整段消失、只剩工具调用卡片）。未落定就放弃本轮，下次结算重试。
+    api.waitSettled({
+      quietMs: 2500,
+      timeoutMs: 30000,
+      shouldContinue: () => runningRef.current === false && autoSaveRef.current.key === autoKey,
+    }).then(gate => {
       const r = autoSaveRef.current
-      if (r.saving) return
-      r.baseline = turns
+      r.trying = false
+      if (r.saving || r.key !== autoKey) return
+      if (!gate.settled) {
+        console.info('[gal-view] 自动存档:回合未落定,跳过本轮(下次结算重试)')
+        return
+      }
+      if (!gate.completed) {
+        console.info('[gal-view] 自动存档:尚无已完成回合,跳过')
+        return
+      }
+      r.baseline = currentTurns
       try { window.localStorage.setItem(autoKey, String(r.baseline)) } catch { /* 忽略 */ }
       r.saving = true
       api.autoSave().then(
         () => {
           r.saving = false
-          console.info('[gal-view] 自动存档完成(间隔 ' + autoSaveEvery + ' 轮)')
+          console.info('[gal-view] 自动存档完成(间隔 ' + currentEvery + ' 轮)')
         },
         (cause) => {
           r.saving = false
-          r.baseline = Math.max(0, r.baseline - autoSaveEvery)
+          r.baseline = Math.max(0, r.baseline - currentEvery)
           console.warn('[gal-view] 自动存档失败:', cause)
         },
       )
-    }, 2500)
-    return () => {
-      if (autoTimerRef.current !== null) {
-        clearTimeout(autoTimerRef.current)
-        autoTimerRef.current = null
+    })
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick])
+  // 对话行骤降看门狗：同一会话内 nodes 数量骤降(>50%)且非运行中，说明官方
+  // 会话窗口被重装成了不完整尾部——调 resync 重拉基线恢复整段对话。
+  const nodesCount = Array.isArray(nodes) ? nodes.length : 0
+  const nodesWatchRef = useRef({ count: null, session: null, last: 0 })
+  useEffect(() => {
+    const w = nodesWatchRef.current
+    if (w.count === null || w.session !== autoSessionId) {
+      w.count = nodesCount
+      w.session = autoSessionId
+      return
+    }
+    const prev = w.count
+    w.count = nodesCount
+    if (!running && prev > 6 && nodesCount < prev / 2) {
+      const now = Date.now()
+      if (now - w.last > 15000 && typeof api?.reopenCurrent === 'function') {
+        w.last = now
+        console.warn('[gal-view:watchdog] 检测到对话行骤减 ' + prev + ' → ' + nodesCount + ',重装会话窗口')
+        void api.reopenCurrent()
       }
     }
-  }, [turns, autoSaveEvery, running, pending, api, autoKey])
+  }, [nodesCount, running, autoSessionId, api])
   // 人设/选项框样式：场景设置驱动（读取时再归一化：编辑中的非法中间态兜底）。
   const personaCfg = useMemo(() => normalizePersona(scene.settings.persona), [scene.settings.persona])
   const pendingStyle = scene.settings.pendingStyle ?? null
@@ -932,7 +976,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
 
       {historyOpen && <HistoryPanel scene={scene} lines={lines} onClose={() => setHistoryOpen(false)} />}
       {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} />}
-      {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} />}
+      {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} running={running} />}
     </div>
   )
 }

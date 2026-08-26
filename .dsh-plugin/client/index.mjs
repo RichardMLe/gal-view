@@ -25,6 +25,7 @@ import {
 } from './fonts.mjs'
 import { createObservable, createHistory, createStorage, loadJSON, saveJSON } from './store.mjs'
 import { saveRootPrefix, rootOf, nextSaveTitle, nextAutoTitle, isValidSlotTitle } from './save.mjs'
+import { waitSettled } from './settle.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
 import presetScene from '../../gal-scene.json'
@@ -467,24 +468,86 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       return { rootId: current, rootTitle, saves: reg.saves, autos: reg.autos }
     },
-    /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。 */
+    /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。
+     * 护栏：官方在「当前会话被归档」时会直接 clear 当前选择（对话栏整个空白），
+     * 因此目标 id 是当前会话时直接拒绝，绝不冒险。 */
     async archiveSessionQuiet(sessionId) {
+      if (this.currentSessionId() === sessionId) {
+        console.warn('[gal-view:save] 拒绝归档当前会话(官方会因此清空对话):', sessionId)
+        return false
+      }
       const op = workspacesSvc?.archiveSession ?? sessionsSvc?.archiveSession
       if (typeof op === 'function') {
         try {
           await op.call(workspacesSvc?.archiveSession !== undefined ? workspacesSvc : sessionsSvc, sessionId)
+          return true
         } catch {
           // 归档失败不阻断：旧会话残留可在官方列表手动归档
         }
       }
+      return false
     },
-    /** 快照式创建：fork 当前会话 + 命名 + 归档 + 入名录。 */
+    /** 落定闸门：等主机摘要 running=false 且连续 quietMs 无列表变化。
+     * 返回 { settled, completed, aborted }；服务缺失时 settled=false。 */
+    async waitSettled(opts = {}) {
+      const list = sessionsSvc?.list
+      if (list === null || list === undefined || typeof list.getSnapshot !== 'function') {
+        return { settled: false, completed: false, aborted: false }
+      }
+      return waitSettled({
+        getSnapshot: () => list.getSnapshot(),
+        subscribe: typeof list.subscribe === 'function' ? cb => list.subscribe(cb) : null,
+        quietMs: typeof opts.quietMs === 'number' ? opts.quietMs : 2500,
+        timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 30000,
+        shouldContinue: typeof opts.shouldContinue === 'function' ? opts.shouldContinue : undefined,
+      })
+    },
+    /** 轮询等待 list.current 变为指定 id（读档切换落地确认；上限 timeoutMs）。 */
+    async waitCurrentIs(id, timeoutMs = 2000) {
+      const started = Date.now()
+      for (;;) {
+        if (this.currentSessionId() === id) return true
+        if (Date.now() - started >= timeoutMs) return this.currentSessionId() === id
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    },
+    /** 重装当前会话窗口（看门狗用）：官方窗口被重装成不完整尾部时，
+     * resync 重置窗口并重拉基线（open 在已打开时是 no-op，不能恢复）。 */
+    async reopenCurrent() {
+      const id = this.currentSessionId()
+      if (id === null) return false
+      try {
+        const session = sessionsSvc?.binding?.(id)?.session ?? null
+        if (session !== null) {
+          if (typeof session.resync === 'function') {
+            await session.resync()
+            return true
+          }
+          if (typeof session.open === 'function') {
+            await session.open()
+            return true
+          }
+        }
+      } catch (cause) {
+        console.warn('[gal-view:watchdog] 重装会话窗口失败:', cause)
+      }
+      return false
+    },
+    /** 记录一次存档操作（看门狗据此判断"官方清空当前选择"是否是我们引发的）。 */
+    noteSaveOp() {
+      this._noteSaveOp?.()
+    },
+    /** 快照式创建：fork 当前会话 + 命名 + 归档 + 入名录。
+     * 调用方必须先过落定闸门（waitSettled）——对未落定的活跃会话 fork 会
+     * 打断官方会话窗口（对话整段消失）。 */
     async createSlot(title, auto) {
       const current = this.currentSessionId()
       if (current === null) throw new Error('未找到当前会话')
+      console.info('[gal-view:save] createSlot 开始:', title, 'auto=' + String(auto === true))
       const snapshot = typeof sessionsSvc.list?.getSnapshot === 'function' ? sessionsSvc.list.getSnapshot() : null
       const rootTitle = this.rootTitleOf(current, snapshot?.byId ?? {})
       const childId = await sessionsSvc.fork({ sessionId: current })
+      console.info('[gal-view:save] fork 完成:', childId)
       try {
         const binding = sessionsSvc.binding?.(childId)
         const session = binding?.session ?? null
@@ -504,6 +567,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       if (rootTitle !== '') reg.rootTitle = rootTitle
       this.writeSlotsRegistry(reg)
+      this.noteSaveOp()
       return { title, childId }
     },
     /** 手动存档改名：仅中文/英文/数字/部分符号；更新名录 + 尝试同步会话标题（归档槽可能失败，忽略）。 */
@@ -549,15 +613,22 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const title = nextAutoTitle(prefix, reg.autos.map(s => s.n))
       return this.createSlot(title, true)
     },
-    /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。 */
+    /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。
+     * 时序护栏：fork(槽) 不影响当前视图；open(子) 后轮询确认切换已落地
+     * （list.current === childId）再归档旧线——官方在"当前会话被归档"时会
+     * clear 当前选择，归档必须先确认切换完成。 */
     async loadSave(saveId) {
       if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
       const oldCurrent = this.currentSessionId()
       if (oldCurrent === null) throw new Error('未找到当前会话')
       const reg = this.readSlotsRegistry()
       const mainTitle = reg.rootTitle !== '' ? reg.rootTitle : this.rootTitleOf(oldCurrent, sessionsSvc?.list?.getSnapshot?.()?.byId ?? {})
+      console.info('[gal-view:save] load: fork 槽', saveId)
       const childId = await sessionsSvc.fork({ sessionId: saveId })
+      console.info('[gal-view:save] load: fork 完成', childId)
       await sessionsSvc.open(childId)
+      const switched = await this.waitCurrentIs(childId, 2000)
+      console.info('[gal-view:save] load: 切换' + (switched ? '已落地' : '未确认') + ', child=' + childId)
       // 新世界线沿用主线程原名（存档名只属于槽位）。
       if (mainTitle !== '') {
         try {
@@ -569,7 +640,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       }
       // 销毁旧世界线：官方无删除接口，归档（列表消失、可恢复）。
-      await this.archiveSessionQuiet(oldCurrent)
+      // 只有确认已切到新线才归档；未确认时放弃归档（旧线留在列表，绝不冒险）。
+      if (this.currentSessionId() === oldCurrent) {
+        console.warn('[gal-view:save] load: 当前会话仍未切换,放弃归档旧线(旧线保留在工作区):', oldCurrent)
+      } else {
+        await this.archiveSessionQuiet(oldCurrent)
+      }
+      this.noteSaveOp()
       return { childId }
     },
     /** LOAD：切换到指定会话（读档）。 */
@@ -695,6 +772,36 @@ export function apply(ctx) {
   const history = createHistory(HISTORY_LIMIT)
   const historySource = createObservable({ undo: 0, redo: 0 })
   const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc)
+
+  // ---- 存档操作看门狗 ----
+  // 官方在「当前会话被归档」时会 clear 当前选择(对话栏整个空白)。若我们的
+  // 存档/读档操作引发该 clear(操作后 8s 内 current 变空且此前有会话),
+  // 自动恢复最近会话,把残余竞态变成一次自愈。
+  let lastMainId = null
+  let lastOpAt = 0
+  api._noteSaveOp = () => {
+    lastOpAt = Date.now()
+    const cur = api.currentSessionId()
+    if (cur !== null) lastMainId = cur
+  }
+  const offSelectionWatch = typeof sessionsSvc?.list?.subscribe === 'function'
+    ? sessionsSvc.list.subscribe(() => {
+        try {
+          const cur = api.currentSessionId()
+          if (cur !== null) {
+            lastMainId = cur
+            return
+          }
+          if (lastMainId !== null && Date.now() - lastOpAt < 8000) {
+            console.warn('[gal-view:watchdog] 官方清空了当前选择,自动恢复:', lastMainId)
+            sessionsSvc?.open?.(lastMainId)
+          }
+        } catch {
+          // 忽略
+        }
+      })
+    : null
+  if (offSelectionWatch !== null) ctx.effect(() => offSelectionWatch, 'gal-view: selection watchdog')
 
   // 官方「对话」栏输入框默认语句：与 GAL 视窗一致「你想和AI名牌说什么呢？」
   // 官方 UI 会随渲染重写 placeholder，观察器在每次改写后补回（scene 名牌变化也同步）。

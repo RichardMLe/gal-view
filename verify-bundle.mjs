@@ -31,20 +31,23 @@ new Function('window', 'document', code)(window, document)
 // —— sessions mock（形状对齐 dsh-client-runtime；无 archiveSession——它在 workspaces 上）——
 let renameCalls = []
 let forkSeq = 0
+let listCurrent = 's-root'
+let openSwitches = true
 const sessionsMock = {
   list: {
     getSnapshot: () => ({
-      current: 's-root',
+      current: listCurrent,
       byId: {
-        's-root': { sessionId: 's-root', title: '深海脑探案', parentSessionId: undefined, updatedAt: 1700000000000 },
-        's-save1': { sessionId: 's-save1', title: '深海脑-save1', parentSessionId: 's-root', updatedAt: 1700000100000 },
-        's-auto1': { sessionId: 's-auto1', title: '深海脑-自动1', parentSessionId: 's-root', updatedAt: 1700000300000 },
+        's-root': { sessionId: 's-root', title: '深海脑探案', parentSessionId: undefined, updatedAt: 1700000000000, running: false, completed: true },
+        's-save1': { sessionId: 's-save1', title: '深海脑-save1', parentSessionId: 's-root', updatedAt: 1700000100000, running: false, completed: true },
+        's-auto1': { sessionId: 's-auto1', title: '深海脑-自动1', parentSessionId: 's-root', updatedAt: 1700000300000, running: false, completed: true },
       },
     }),
     subscribe: () => () => {},
   },
   fork: () => { forkSeq += 1; return Promise.resolve('s-new-' + forkSeq) },
-  open: id => { openCalls.push(id); return Promise.resolve() },
+  // 真实运行时 open(select) 同步切换 list.current;openSwitches=false 模拟切换未落地的竞态。
+  open: id => { openCalls.push(id); if (openSwitches) listCurrent = id; return Promise.resolve() },
   binding: id => ({
     session: {
       rename: title => { renameCalls.push([id, title]); return Promise.resolve({ ok: true }) },
@@ -114,8 +117,16 @@ try {
   if (openCalls[0] !== 's-new-3') { console.error('FAIL loadSave fork child not opened: ' + openCalls[0]); process.exit(1) }
   // 新世界线改回主线程原名
   if (renameCalls[2]?.[0] !== 's-new-3' || renameCalls[2]?.[1] !== '深海脑探案') { console.error('FAIL loadSave rename to main title'); process.exit(1) }
-  // 旧世界线归档
+  // 旧世界线归档（切换已确认后）
   if (!archiveCalls.includes('s-root')) { console.error('FAIL loadSave old line not archived'); process.exit(1) }
+
+  // —— 竞态护栏：open 未切换落地的读档必须放弃归档旧线（官方会因归档当前会话清空对话）——
+  openSwitches = false
+  const archivedBefore = archiveCalls.length
+  await registeredApi.loadSave(index.saves[0].id)
+  console.log('loadSave(no-switch) openCalls:', JSON.stringify(openCalls), 'archiveCalls:', JSON.stringify(archiveCalls))
+  if (archiveCalls.length !== archivedBefore) { console.error('FAIL guard: archived while current did not switch'); process.exit(1) }
+  openSwitches = true
 
   if (registeredApi.hasSessionsService() !== true) { console.error('FAIL hasSessionsService'); process.exit(1) }
   console.log('ALL OK')
