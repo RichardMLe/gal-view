@@ -417,22 +417,46 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     // 无记录（新会话）→ 基线=当前回合数；有记录 → 沿用（切标签页/刷新不重置）。
     autoSaveRef.current.baseline = stored ?? turns
   }
+  const autoTimerRef = useRef(null)
   useEffect(() => {
+    // 每次依赖变化先取消上一次的延迟(尾随去抖:以最后一次结算为准)。
+    if (autoTimerRef.current !== null) {
+      clearTimeout(autoTimerRef.current)
+      autoTimerRef.current = null
+    }
     const ref = autoSaveRef.current
     if (autoSaveEvery <= 0 || ref.saving) return
     if (turns - ref.baseline < autoSaveEvery) return
     if (running || (Array.isArray(pending) && pending.length > 0)) return
     if (typeof api?.autoSave !== 'function' || api.hasSessionsService() !== true) return
-    ref.baseline = turns
-    try { window.localStorage.setItem(autoKey, String(ref.baseline)) } catch { /* 忽略 */ }
-    ref.saving = true
-    api.autoSave().then(
-      () => { ref.saving = false },
-      () => {
-        ref.saving = false
-        ref.baseline = Math.max(0, ref.baseline - autoSaveEvery)
-      },
-    )
+    // 回合结束后延迟 2.5s 再 fork:等会话完全落定(投影/分页窗口稳定)。
+    // 结算瞬间 fork 会触发官方会话投影重建,窗口外的行被隐藏 → 对话栏
+    // 整段消失(只剩窗口内工具调用)。手动存档在稳定状态点操作,无此问题。
+    autoTimerRef.current = setTimeout(() => {
+      autoTimerRef.current = null
+      const r = autoSaveRef.current
+      if (r.saving) return
+      r.baseline = turns
+      try { window.localStorage.setItem(autoKey, String(r.baseline)) } catch { /* 忽略 */ }
+      r.saving = true
+      api.autoSave().then(
+        () => {
+          r.saving = false
+          console.info('[gal-view] 自动存档完成(间隔 ' + autoSaveEvery + ' 轮)')
+        },
+        (cause) => {
+          r.saving = false
+          r.baseline = Math.max(0, r.baseline - autoSaveEvery)
+          console.warn('[gal-view] 自动存档失败:', cause)
+        },
+      )
+    }, 2500)
+    return () => {
+      if (autoTimerRef.current !== null) {
+        clearTimeout(autoTimerRef.current)
+        autoTimerRef.current = null
+      }
+    }
   }, [turns, autoSaveEvery, running, pending, api, autoKey])
   // 人设/选项框样式：场景设置驱动（读取时再归一化：编辑中的非法中间态兜底）。
   const personaCfg = useMemo(() => normalizePersona(scene.settings.persona), [scene.settings.persona])

@@ -4380,27 +4380,45 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
     }
     autoSaveRef.current.baseline = stored ?? turns;
   }
+  const autoTimerRef = (0, import_react4.useRef)(null);
   (0, import_react4.useEffect)(() => {
+    if (autoTimerRef.current !== null) {
+      clearTimeout(autoTimerRef.current);
+      autoTimerRef.current = null;
+    }
     const ref = autoSaveRef.current;
     if (autoSaveEvery <= 0 || ref.saving) return;
     if (turns - ref.baseline < autoSaveEvery) return;
     if (running || Array.isArray(pending) && pending.length > 0) return;
     if (typeof api?.autoSave !== "function" || api.hasSessionsService() !== true) return;
-    ref.baseline = turns;
-    try {
-      window.localStorage.setItem(autoKey, String(ref.baseline));
-    } catch {
-    }
-    ref.saving = true;
-    api.autoSave().then(
-      () => {
-        ref.saving = false;
-      },
-      () => {
-        ref.saving = false;
-        ref.baseline = Math.max(0, ref.baseline - autoSaveEvery);
+    autoTimerRef.current = setTimeout(() => {
+      autoTimerRef.current = null;
+      const r = autoSaveRef.current;
+      if (r.saving) return;
+      r.baseline = turns;
+      try {
+        window.localStorage.setItem(autoKey, String(r.baseline));
+      } catch {
       }
-    );
+      r.saving = true;
+      api.autoSave().then(
+        () => {
+          r.saving = false;
+          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + autoSaveEvery + " \u8F6E)");
+        },
+        (cause) => {
+          r.saving = false;
+          r.baseline = Math.max(0, r.baseline - autoSaveEvery);
+          console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u5931\u8D25:", cause);
+        }
+      );
+    }, 2500);
+    return () => {
+      if (autoTimerRef.current !== null) {
+        clearTimeout(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+    };
   }, [turns, autoSaveEvery, running, pending, api, autoKey]);
   const personaCfg = (0, import_react4.useMemo)(() => normalizePersona(scene.settings.persona), [scene.settings.persona]);
   const pendingStyle = scene.settings.pendingStyle ?? null;
