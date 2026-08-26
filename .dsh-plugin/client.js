@@ -4452,10 +4452,9 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
     w.count = nodesCount;
     if (!running && prev > 6 && nodesCount < prev / 2) {
       const now = Date.now();
-      if (now - w.last > 15e3 && typeof api?.reopenCurrent === "function") {
+      if (now - w.last > 15e3) {
         w.last = now;
-        console.warn("[gal-view:watchdog] \u68C0\u6D4B\u5230\u5BF9\u8BDD\u884C\u9AA4\u51CF " + prev + " \u2192 " + nodesCount + ",\u91CD\u88C5\u4F1A\u8BDD\u7A97\u53E3");
-        void api.reopenCurrent();
+        console.warn("[gal-view:watchdog] \u68C0\u6D4B\u5230\u5BF9\u8BDD\u884C\u9AA4\u51CF " + prev + " \u2192 " + nodesCount + "(\u4F1A\u8BDD " + autoSessionId + ")\u3002\u65E5\u5FD7\u4EC5\u4F9B\u8BCA\u65AD;\u5982\u5BF9\u8BDD\u6D88\u5931\u8BF7 F5 \u5237\u65B0\u3002");
       }
     }
   }, [nodesCount, running, autoSessionId, api]);
@@ -5633,8 +5632,7 @@ function apply(ctx) {
         return;
       }
       if (lastMainId !== null && Date.now() - lastOpAt < 8e3) {
-        console.warn("[gal-view:watchdog] \u5B98\u65B9\u6E05\u7A7A\u4E86\u5F53\u524D\u9009\u62E9,\u81EA\u52A8\u6062\u590D:", lastMainId);
-        sessionsSvc?.open?.(lastMainId);
+        console.warn("[gal-view:watchdog] \u68C0\u6D4B\u5230\u5B58\u6863\u64CD\u4F5C\u540E\u5F53\u524D\u9009\u62E9\u88AB\u6E05\u7A7A(\u6700\u8FD1\u4F1A\u8BDD: " + lastMainId + ",8s \u5185)\u3002\u65E5\u5FD7\u4EC5\u4F9B\u8BCA\u65AD,\u4E0D\u81EA\u52A8\u6062\u590D;\u5982\u5BF9\u8BDD\u6D88\u5931\u8BF7 F5 \u5237\u65B0\u3002");
       }
     } catch {
     }

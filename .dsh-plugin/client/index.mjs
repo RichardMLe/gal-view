@@ -773,10 +773,11 @@ export function apply(ctx) {
   const historySource = createObservable({ undo: 0, redo: 0 })
   const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc)
 
-  // ---- 存档操作看门狗 ----
-  // 官方在「当前会话被归档」时会 clear 当前选择(对话栏整个空白)。若我们的
-  // 存档/读档操作引发该 clear(操作后 8s 内 current 变空且此前有会话),
-  // 自动恢复最近会话,把残余竞态变成一次自愈。
+  // ---- 存档操作看门狗(仅记录,不干预)----
+  // 官方在「当前会话被归档」时会 clear 当前选择(对话栏整个空白)。此处只记录
+  // 该事件发生的时间与最后已知会话,不自动 open——自动干预会与官方合法的
+  // 清空(用户点新会话等)打架,且曾与官方状态机产生耦合(8-26 事故后确立:
+  // 看门狗只记录、不动手;要恢复干预,先拿 [gal-view:watchdog] 日志证明残余竞态)。
   let lastMainId = null
   let lastOpAt = 0
   api._noteSaveOp = () => {
@@ -793,8 +794,7 @@ export function apply(ctx) {
             return
           }
           if (lastMainId !== null && Date.now() - lastOpAt < 8000) {
-            console.warn('[gal-view:watchdog] 官方清空了当前选择,自动恢复:', lastMainId)
-            sessionsSvc?.open?.(lastMainId)
+            console.warn('[gal-view:watchdog] 检测到存档操作后当前选择被清空(最近会话: ' + lastMainId + ',8s 内)。日志仅供诊断,不自动恢复;如对话消失请 F5 刷新。')
           }
         } catch {
           // 忽略

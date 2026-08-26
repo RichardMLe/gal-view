@@ -480,8 +480,10 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       )
     })
   }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick])
-  // 对话行骤降看门狗：同一会话内 nodes 数量骤降(>50%)且非运行中，说明官方
-  // 会话窗口被重装成了不完整尾部——调 resync 重拉基线恢复整段对话。
+  // 对话行骤降看门狗(仅记录,不干预):同一会话内 nodes 数量骤降(>50%)且非
+  // 运行中,说明官方会话窗口被重装成了不完整尾部。只打日志——自动 resync
+  // 会与官方合法的尾部页重装(>50 条长对话 repairGap 只保留尾部 50 条)误判,
+  // 且主动干预曾与官方状态机耦合(8-26 事故后确立:看门狗只记录、不动手)。
   const nodesCount = Array.isArray(nodes) ? nodes.length : 0
   const nodesWatchRef = useRef({ count: null, session: null, last: 0 })
   useEffect(() => {
@@ -495,10 +497,9 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     w.count = nodesCount
     if (!running && prev > 6 && nodesCount < prev / 2) {
       const now = Date.now()
-      if (now - w.last > 15000 && typeof api?.reopenCurrent === 'function') {
+      if (now - w.last > 15000) {
         w.last = now
-        console.warn('[gal-view:watchdog] 检测到对话行骤减 ' + prev + ' → ' + nodesCount + ',重装会话窗口')
-        void api.reopenCurrent()
+        console.warn('[gal-view:watchdog] 检测到对话行骤减 ' + prev + ' → ' + nodesCount + '(会话 ' + autoSessionId + ')。日志仅供诊断;如对话消失请 F5 刷新。')
       }
     }
   }, [nodesCount, running, autoSessionId, api])
