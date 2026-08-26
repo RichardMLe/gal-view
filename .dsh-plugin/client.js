@@ -512,6 +512,14 @@ var CSS = `
 }
 .gv-saves-hint { margin: 2px 0 0; font-size: 11px; line-height: 1.7; color: var(--gv-text-dim); }
 .gv-saves-meta { margin: 4px 0 0; font-size: 11px; color: var(--gv-text-dim); letter-spacing: .04em; }
+/* \u5B58\u6863\u6587\u4EF6\u5939\u72B6\u6001\u884C\uFF1A\u5DE6\u4FA7\u8DEF\u5F84\u8BF4\u660E + \u53F3\u4FA7\u9009\u62E9\u6309\u94AE\u3002 */
+.gv-saves-dir {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 8px; padding: 6px 10px;
+  border: 1px dashed var(--gv-line-strong); border-radius: 4px;
+  background: rgba(16, 20, 38, .4);
+}
+.gv-saves-dir-label { font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
 .gv-saves-list {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin-top: 8px;
@@ -4033,58 +4041,6 @@ function createFitsMeasurer(box) {
   };
 }
 
-// .dsh-plugin/client/save.mjs
-function clipTitle(title, cap) {
-  return String(title ?? "").replace(/\s+/g, " ").trim().slice(0, cap);
-}
-function saveRootPrefix(rootTitle) {
-  const t = clipTitle(rootTitle, 3);
-  return t === "" ? "GAL" : t;
-}
-function summaryOf(entry, fallbackId) {
-  const id = String(entry?.sessionId ?? fallbackId ?? "");
-  const parentValue = entry?.parentId ?? entry?.parentSessionId;
-  return {
-    id,
-    title: typeof entry?.title === "string" ? entry.title : "",
-    parentId: typeof parentValue === "string" && parentValue !== "" ? parentValue : null,
-    updatedAt: typeof entry?.updatedAt === "number" ? entry.updatedAt : typeof entry?.createdAt === "number" ? entry.createdAt : 0
-  };
-}
-function rootOf(byId, id, guard = 64) {
-  let cur = String(id ?? "");
-  let depth = 0;
-  while (cur !== "" && depth < guard) {
-    const entry = byId[cur];
-    if (entry === void 0 || entry === null) break;
-    const parent = summaryOf(entry, cur).parentId;
-    if (parent === null || byId[parent] === void 0) return cur;
-    cur = parent;
-    depth += 1;
-  }
-  return String(id ?? "");
-}
-function nextSaveTitle(prefix, existingNs) {
-  let max = 0;
-  for (const n of existingNs) {
-    if (typeof n === "number" && Number.isFinite(n) && n > max) max = n;
-  }
-  return String(prefix) + "-save" + (max + 1);
-}
-function nextAutoTitle(prefix, existingNs) {
-  let max = 0;
-  for (const n of existingNs) {
-    if (typeof n === "number" && Number.isFinite(n) && n > max) max = n;
-  }
-  return String(prefix) + "-\u81EA\u52A8" + (max + 1);
-}
-var SLOT_TITLE_OK = /^[\u4e00-\u9fa5A-Za-z0-9 _\-·…！？!?。.]+$/;
-function isValidSlotTitle(text) {
-  const value = String(text ?? "").trim();
-  if (value === "" || value.length > 40) return false;
-  return SLOT_TITLE_OK.test(value);
-}
-
 // .dsh-plugin/client/GalView.jsx
 var STATUS_DWELL_MS = 1500;
 var STATUS_MAX_WAIT_MS = 6e3;
@@ -4162,24 +4118,35 @@ function SettingsPanel({ scene, api, onClose }) {
         if (Number.isFinite(n)) api.updateSettings({ autoSaveEvery: Math.min(100, Math.max(0, n)) });
       }
     }
-  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5FEB\u7167\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5FEB\u7167\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u5B58\u6863/\u8BFB\u6863\u4F1A\u5728\u56DE\u590D\u5B8C\u5168\u843D\u5B9A\u540E\u6267\u884C\uFF0C\u4E0D\u6253\u65AD\u5BF9\u8BDD\u3002"));
+  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5B58\u6863\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5B58\u6863\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u5B58\u6863\u4FDD\u5B58\u4E3A\u5DE5\u7A0B\u76EE\u5F55 .gal-view-saves \u4E0B\u7684\u6587\u4EF6\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u5728\u5B58\u6863\u9762\u677F\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09\uFF1B\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\uFF0C\u6D4B\u8BD5\u671F\u65E7\u5BF9\u8BDD\u4FDD\u7559\u4E0D\u9500\u6BC1\u3002"));
 }
-function SavePanel({ api, mode, onClose, running }) {
-  const [index, setIndex] = (0, import_react4.useState)(() => loadSaveIndex(api));
-  const [current, setCurrent] = (0, import_react4.useState)(() => loadCurrentSession(api));
+function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
+  const [index, setIndex] = (0, import_react4.useState)(null);
+  const [legacy, setLegacy] = (0, import_react4.useState)(() => loadSaveIndex(api));
   const [busy, setBusy] = (0, import_react4.useState)(false);
+  const [picking, setPicking] = (0, import_react4.useState)(false);
   const [error, setError] = (0, import_react4.useState)(null);
   const [notice, setNotice] = (0, import_react4.useState)(null);
   const [editingId, setEditingId] = (0, import_react4.useState)(null);
   const [editText, setEditText] = (0, import_react4.useState)("");
-  const refresh = (0, import_react4.useCallback)(() => {
-    setIndex(loadSaveIndex(api));
-    setCurrent(loadCurrentSession(api));
+  const refresh = (0, import_react4.useCallback)(async () => {
+    setLegacy(loadSaveIndex(api));
+    if (typeof api?.listFileSlots !== "function") {
+      setIndex(null);
+      return;
+    }
+    try {
+      setIndex(await api.listFileSlots());
+    } catch {
+      setIndex(null);
+    }
   }, [api]);
   (0, import_react4.useEffect)(() => {
-    refresh();
+    void refresh();
     if (typeof api?.onSessions !== "function") return;
-    return api.onSessions(refresh);
+    return api.onSessions(() => {
+      void refresh();
+    });
   }, [api, refresh]);
   (0, import_react4.useEffect)(() => {
     const onKey = (e) => {
@@ -4190,26 +4157,34 @@ function SavePanel({ api, mode, onClose, running }) {
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
+  const pickDir = async () => {
+    if (picking || busy) return;
+    setPicking(true);
+    setError(null);
+    try {
+      if (typeof api?.ensureSaveDir !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5939\u5199\u5165");
+      const ok = await api.ensureSaveDir();
+      if (!ok) setNotice("\u5DF2\u53D6\u6D88\u9009\u62E9\uFF1B\u6B64\u73AF\u5883\u5B58\u6863\u5C06\u4E0B\u8F7D\u5230\u300C\u4E0B\u8F7D\u300D\u6587\u4EF6\u5939");
+      await refresh();
+    } catch (cause) {
+      setError(causeText2(cause));
+    }
+    setPicking(false);
+  };
   const save = async () => {
     if (busy) return;
-    if (typeof api?.saveSlot !== "function" || api.hasSessionsService() !== true) {
-      setError("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9\uFF08sessions \u670D\u52A1\u4E0D\u53EF\u7528\uFF09");
+    if (typeof onRequestSave !== "function") {
+      setError("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5B58\u6863");
       return;
     }
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      if (typeof api?.waitSettled === "function") {
-        setNotice("\u6B63\u5728\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u2026");
-        const gate = await api.waitSettled({ quietMs: 2500, timeoutMs: 15e3 });
-        if (!gate.settled) throw new Error("\u56DE\u590D\u5C1A\u672A\u5B8C\u5168\u843D\u5B9A\uFF0C\u8BF7\u7A0D\u540E\u518D\u5B58\u6863");
-        if (!gate.completed) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u56DE\u5408\uFF0C\u5148\u804A\u51E0\u53E5\u518D\u5B58\u6863\u5427");
-      }
-      setNotice(null);
-      const result = await api.saveSlot();
-      setNotice("\u5DF2\u521B\u5EFA\u5FEB\u7167\u300C" + result.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
-      refresh();
+      setNotice("\u6B63\u5728\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u5E76\u6574\u7406\u8BB0\u5F55\u2026");
+      const result = await onRequestSave();
+      setNotice(result !== null && result.fallback === true ? "\u5DF2\u4E0B\u8F7D\u5B58\u6863\u6587\u4EF6\uFF08\u6B64\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5939\u5199\u5165\uFF0C\u8BF7\u628A\u6587\u4EF6\u653E\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF09" : "\u5DF2\u521B\u5EFA\u5B58\u6863\u300C" + result.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
+      await refresh();
     } catch (cause) {
       setError(causeText2(cause));
       setNotice(null);
@@ -4217,16 +4192,32 @@ function SavePanel({ api, mode, onClose, running }) {
     setBusy(false);
   };
   const load = async (id) => {
-    if (busy) return;
+    if (busy || running === true) return;
     setBusy(true);
     setError(null);
     try {
-      await api.loadSave(id);
+      if (typeof api?.loadSaveFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u8BFB\u6863");
+      const result = await api.loadSaveFile(id);
+      if (typeof onLoaded === "function") onLoaded(result);
       onClose();
     } catch (cause) {
       setError(causeText2(cause));
       setBusy(false);
     }
+  };
+  const remove = async (slot) => {
+    if (busy) return;
+    if (typeof window.confirm === "function" && !window.confirm("\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D\uFF1F\u6587\u4EF6\u5C06\u88AB\u6C38\u4E45\u5220\u9664\u3002")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (typeof api?.deleteSlotFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664\u5B58\u6863");
+      await api.deleteSlotFile(slot.id);
+      await refresh();
+    } catch (cause) {
+      setError(causeText2(cause));
+    }
+    setBusy(false);
   };
   const beginRename = (slot) => {
     setEditingId(slot.id);
@@ -4243,13 +4234,27 @@ function SavePanel({ api, mode, onClose, running }) {
       if (typeof api?.renameSlot !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6539\u540D");
       await api.renameSlot(slot.id, text);
       setEditingId(null);
-      refresh();
+      await refresh();
     } catch (cause) {
       setError(causeText2(cause));
     }
   };
-  const nextTitle = nextSaveTitle(saveRootPrefix(index.rootTitle), index.saves.map((s) => s.n));
-  const renderSlotRows = (slots, isAuto) => slots.map((s) => {
+  const loadLegacy = async (id) => {
+    if (busy || running === true) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.loadSave(id);
+      onClose();
+    } catch (cause) {
+      setError(causeText2(cause));
+      setBusy(false);
+    }
+  };
+  const dirReady = index !== null && index.ready === true;
+  const brokenCount = index !== null && Array.isArray(index.broken) ? index.broken.length : 0;
+  const renderFileSlot = (s) => /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-row", key: s.id }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-name" }, s.title), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.savedAt), s.turns > 0 ? " \xB7 " + s.turns + " \u56DE\u5408" : ""), s.auto === true && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy || running === true, onClick: () => load(s.id) }, "\u8BFB\u53D6"), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: () => remove(s) }, "\u5220\u9664"));
+  const renderLegacyRows = (slots, isAuto) => slots.map((s) => {
     const editing = !isAuto && editingId === s.id;
     return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-row", key: s.id }, editing ? /* @__PURE__ */ import_react4.default.createElement(
       "input",
@@ -4277,9 +4282,10 @@ function SavePanel({ api, mode, onClose, running }) {
         onClick: isAuto ? void 0 : () => beginRename(s)
       },
       s.title
-    ), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.updatedAt)), isAuto && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy || running === true, onClick: () => load(s.id) }, "\u8BFB\u53D6"));
+    ), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.updatedAt)), isAuto && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy || running === true, onClick: () => loadLegacy(s.id) }, "\u8BFB\u53D6"));
   });
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u51BB\u7ED3\u5F53\u524D\u8FDB\u5EA6\u7684\u5FEB\u7167\u300C", saveRootPrefix(index.rootTitle), "-save\u2026\u300D\uFF0C\u4E4B\u540E\u8BFB\u6863\u6C38\u8FDC\u4E0D\u4F1A\u6539\u53D8\u5B83\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u4ECE\u5FEB\u7167\u91CD\u5F00\u4E00\u6761\u4E16\u754C\u7EBF\uFF0C\u65E7\u4E16\u754C\u7EBF\u9500\u6BC1\u3002\u4E4B\u540E\u7684\u5BF9\u8BDD\u53D1\u751F\u5728\u65B0\u7EBF\u4E0A\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), index.rootTitle !== "" && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-meta" }, "\u4E3B\u7EBF\u7A0B\u300C", index.rootTitle, "\u300D"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863"), index.autos.length > 0 ? renderSlotRows(index.autos, true) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863"), index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), renderSlotRows(index.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863\uFF08", nextTitle, "\uFF09"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
+  const hasLegacy = legacy.saves.length > 0 || legacy.autos.length > 0;
+  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirReady ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u5DE5\u7A0B\u76EE\u5F55 \\.gal-view-saves" : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u9009\u62E9\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09", brokenCount > 0 ? " \xB7 " + brokenCount + " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirReady ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u628A\u5F53\u524D\u5BF9\u8BDD\u8BB0\u5F55\u5199\u6210\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\u91CC\u7684\u6587\u4EF6\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09\uFF1B\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u6309\u5B58\u6863\u70B9\u5207\u51FA\u65B0\u4E16\u754C\u7EBF\u7EE7\u7EED\uFF08\u6D4B\u8BD5\u671F\u65E7\u4E16\u754C\u7EBF\u4FDD\u7559\uFF0C\u4E0D\u9500\u6BC1\uFF09\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF0C\u517C\u5BB9\u8BFB\u53D6\uFF09"), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
 }
 function loadSaveIndex(api) {
   try {
@@ -4287,14 +4293,6 @@ function loadSaveIndex(api) {
     return api.saveIndex();
   } catch {
     return { rootId: null, rootTitle: "", saves: [], autos: [] };
-  }
-}
-function loadCurrentSession(api) {
-  try {
-    if (typeof api?.currentSessionId !== "function") return null;
-    return api.currentSessionId();
-  } catch {
-    return null;
   }
 }
 function formatTime(ts) {
@@ -4368,7 +4366,9 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   useFillSessionArea(rootRef);
   const lines = (0, import_react4.useMemo)(() => nodesToLines(nodes), [nodes]);
   const liveText = running ? partialToText(partial) : "";
-  const lastLine = lines.length > 0 ? lines[lines.length - 1] : null;
+  const [restoredLines, setRestoredLines] = (0, import_react4.useState)(null);
+  const displayLines = lines.length > 0 || restoredLines === null || restoredLines.length === 0 ? lines : restoredLines;
+  const lastLine = displayLines.length > 0 ? displayLines[displayLines.length - 1] : null;
   const autoSaveEvery = typeof scene.settings.autoSaveEvery === "number" ? scene.settings.autoSaveEvery : 10;
   const sessionStats = typeof useProjection === "function" ? useProjection("sessionStats") : void 0;
   const playerTurns = (0, import_react4.useMemo)(() => lines.filter((l) => l.kind === "player").length, [lines]);
@@ -4395,20 +4395,54 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
     if (typeof api?.onSessions !== "function") return void 0;
     return api.onSessions(() => setSettleTick((t) => t + 1));
   }, [api]);
+  const nodesRef = (0, import_react4.useRef)(nodes);
+  nodesRef.current = nodes;
+  const captureRecord = (0, import_react4.useCallback)(async () => {
+    const sessionIdValue = typeof api?.currentSessionId === "function" ? api.currentSessionId() : null;
+    if (sessionIdValue === null) return null;
+    if (typeof api?.pageFullHistory === "function") {
+      try {
+        await api.pageFullHistory();
+      } catch (cause) {
+        console.warn("[gal-view:save] \u5386\u53F2\u56DE\u62C9\u5931\u8D25:", cause);
+      }
+      let stable = 0;
+      let prevLen = -1;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0;
+        if (len === prevLen) stable += 1;
+        else stable = 0;
+        prevLen = len;
+        if (stable >= 2) break;
+      }
+    }
+    const list = Array.isArray(nodesRef.current) ? nodesRef.current : [];
+    const recLines = nodesToLines(list);
+    const lastNode = list[list.length - 1];
+    return {
+      sessionId: sessionIdValue,
+      rootTitle: typeof api?.mainTitle === "function" ? api.mainTitle() : "",
+      assistantName: assistantDisplayName(scene),
+      lines: recLines,
+      turns: recLines.filter((l) => l.kind === "player").length,
+      atSeq: lastNode !== void 0 && typeof lastNode.seq === "number" ? lastNode.seq : null
+    };
+  }, [api, scene]);
   (0, import_react4.useEffect)(() => {
     const ref = autoSaveRef.current;
     if (autoSaveEvery <= 0 || ref.saving || ref.trying) return;
     if (turns - ref.baseline < autoSaveEvery) return;
     if (running || Array.isArray(pending) && pending.length > 0) return;
-    if (typeof api?.autoSave !== "function" || typeof api?.waitSettled !== "function" || api.hasSessionsService() !== true) return;
+    if (typeof api?.saveSlotFile !== "function" || typeof api?.waitSettled !== "function") return;
     const currentTurns = turns;
     const currentEvery = autoSaveEvery;
     ref.trying = true;
     api.waitSettled({
-      quietMs: 2500,
+      quietMs: 1500,
       timeoutMs: 3e4,
       shouldContinue: () => runningRef.current === false && autoSaveRef.current.key === autoKey
-    }).then((gate) => {
+    }).then(async (gate) => {
       const r = autoSaveRef.current;
       r.trying = false;
       if (r.saving || r.key !== autoKey) return;
@@ -4416,29 +4450,35 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u56DE\u5408\u672A\u843D\u5B9A,\u8DF3\u8FC7\u672C\u8F6E(\u4E0B\u6B21\u7ED3\u7B97\u91CD\u8BD5)");
         return;
       }
-      if (!gate.completed) {
-        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u5C1A\u65E0\u5DF2\u5B8C\u6210\u56DE\u5408,\u8DF3\u8FC7");
-        return;
-      }
-      r.baseline = currentTurns;
-      try {
-        window.localStorage.setItem(autoKey, String(r.baseline));
-      } catch {
-      }
       r.saving = true;
-      api.autoSave().then(
-        () => {
+      try {
+        const rec = await captureRecord();
+        if (rec === null || rec.atSeq === null) {
+          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u5C1A\u65E0\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u8DF3\u8FC7");
           r.saving = false;
-          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + currentEvery + " \u8F6E)");
-        },
-        (cause) => {
-          r.saving = false;
-          r.baseline = Math.max(0, r.baseline - currentEvery);
-          console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u5931\u8D25:", cause);
+          return;
         }
-      );
+        await api.saveSlotFile({
+          auto: true,
+          rootTitle: rec.rootTitle,
+          sessionId: rec.sessionId,
+          atSeq: rec.atSeq,
+          assistantName: rec.assistantName,
+          turns: rec.turns,
+          lines: rec.lines
+        });
+        r.baseline = currentTurns;
+        try {
+          window.localStorage.setItem(autoKey, String(r.baseline));
+        } catch {
+        }
+        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + currentEvery + " \u8F6E)");
+      } catch (cause) {
+        console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u5931\u8D25:", cause);
+      }
+      r.saving = false;
     });
-  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick]);
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, captureRecord]);
   const nodesCount = Array.isArray(nodes) ? nodes.length : 0;
   const nodesWatchRef = (0, import_react4.useRef)({ count: null, session: null, last: 0 });
   (0, import_react4.useEffect)(() => {
@@ -4691,6 +4731,38 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
     }
   }, [running, type.done, hasNextPage, pageIndex, skipTyping]);
   const send = useSend(inputActions, draft, () => setSharedDraft(""));
+  const requestSave = (0, import_react4.useCallback)(async () => {
+    const hasSvc = typeof api?.hasSessionsService === "function" ? api.hasSessionsService() : false;
+    if (hasSvc && typeof api?.waitSettled === "function") {
+      const gate = await api.waitSettled({ quietMs: 1500, timeoutMs: 15e3 });
+      if (!gate.settled) throw new Error("\u56DE\u590D\u5C1A\u672A\u5B8C\u5168\u843D\u5B9A\uFF0C\u8BF7\u7A0D\u540E\u518D\u5B58\u6863");
+    }
+    if (typeof api?.saveSlotFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5B58\u6863");
+    const rec = await captureRecord();
+    if (rec === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+    if (rec.atSeq === null) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD\uFF0C\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
+    return api.saveSlotFile({
+      auto: false,
+      rootTitle: rec.rootTitle,
+      sessionId: rec.sessionId,
+      atSeq: rec.atSeq,
+      assistantName: rec.assistantName,
+      turns: rec.turns,
+      lines: rec.lines
+    });
+  }, [api, captureRecord]);
+  const requestLoad = (0, import_react4.useCallback)(async (id) => {
+    if (typeof api?.loadSaveFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u8BFB\u6863");
+    return api.loadSaveFile(id);
+  }, [api]);
+  const handleLoaded = (0, import_react4.useCallback)((result) => {
+    if (result !== null && typeof result === "object" && result.mode === "inject" && Array.isArray(result.lines)) {
+      setRestoredLines(result.lines);
+      if (typeof result.recordText === "string" && result.recordText !== "") setSharedDraft(result.recordText);
+    } else {
+      setRestoredLines(null);
+    }
+  }, [setSharedDraft]);
   const handleAction = (0, import_react4.useCallback)((action) => {
     const key = String(action ?? "").trim().toLowerCase();
     switch (key) {
@@ -4804,7 +4876,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       fontsMap: fonts.map,
       onExitEditor: () => setMode("game")
     }
-  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false) }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running }));
+  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines: displayLines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false) }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running, onRequestSave: requestSave, onLoaded: handleLoaded }));
 }
 
 // .dsh-plugin/client/SettingsTab.jsx
@@ -4874,6 +4946,58 @@ function createIdbAssets(dbName = "gal-view") {
   return createIdbStore(dbName, "assets");
 }
 
+// .dsh-plugin/client/save.mjs
+function clipTitle(title, cap) {
+  return String(title ?? "").replace(/\s+/g, " ").trim().slice(0, cap);
+}
+function saveRootPrefix(rootTitle) {
+  const t = clipTitle(rootTitle, 3);
+  return t === "" ? "GAL" : t;
+}
+function summaryOf(entry, fallbackId) {
+  const id = String(entry?.sessionId ?? fallbackId ?? "");
+  const parentValue = entry?.parentId ?? entry?.parentSessionId;
+  return {
+    id,
+    title: typeof entry?.title === "string" ? entry.title : "",
+    parentId: typeof parentValue === "string" && parentValue !== "" ? parentValue : null,
+    updatedAt: typeof entry?.updatedAt === "number" ? entry.updatedAt : typeof entry?.createdAt === "number" ? entry.createdAt : 0
+  };
+}
+function rootOf(byId, id, guard = 64) {
+  let cur = String(id ?? "");
+  let depth = 0;
+  while (cur !== "" && depth < guard) {
+    const entry = byId[cur];
+    if (entry === void 0 || entry === null) break;
+    const parent = summaryOf(entry, cur).parentId;
+    if (parent === null || byId[parent] === void 0) return cur;
+    cur = parent;
+    depth += 1;
+  }
+  return String(id ?? "");
+}
+function nextSaveTitle(prefix, existingNs) {
+  let max = 0;
+  for (const n of existingNs) {
+    if (typeof n === "number" && Number.isFinite(n) && n > max) max = n;
+  }
+  return String(prefix) + "-save" + (max + 1);
+}
+function nextAutoTitle(prefix, existingNs) {
+  let max = 0;
+  for (const n of existingNs) {
+    if (typeof n === "number" && Number.isFinite(n) && n > max) max = n;
+  }
+  return String(prefix) + "-\u81EA\u52A8" + (max + 1);
+}
+var SLOT_TITLE_OK = /^[\u4e00-\u9fa5A-Za-z0-9 _\-·…！？!?。.]+$/;
+function isValidSlotTitle(text) {
+  const value = String(text ?? "").trim();
+  if (value === "" || value.length > 40) return false;
+  return SLOT_TITLE_OK.test(value);
+}
+
 // .dsh-plugin/client/settle.mjs
 function settledOf(entry) {
   if (entry === null || entry === void 0) return false;
@@ -4920,6 +5044,318 @@ async function waitSettled(opts) {
     }
   } finally {
     if (off !== null) off();
+  }
+}
+
+// .dsh-plugin/client/savefile.mjs
+var ROLE_MARK = {
+  player: "\u3010\u73A9\u5BB6\u3011",
+  assistant: "\u3010AI\u3011",
+  system: "\u3010\u7CFB\u7EDF\u3011"
+};
+function roleOfMark(line) {
+  if (line.startsWith(ROLE_MARK.player)) return "player";
+  if (line.startsWith(ROLE_MARK.assistant)) return "assistant";
+  if (line.startsWith(ROLE_MARK.system)) return "system";
+  return null;
+}
+function markOfRole(role) {
+  return ROLE_MARK[role] ?? ROLE_MARK.system;
+}
+function encodeLine(text) {
+  return String(text ?? "").replace(/\r\n?/g, "\n").replace(/\n+/g, " \u23CE ").trim();
+}
+function decodeLine(text) {
+  return String(text ?? "").split(" \u23CE ").filter((part) => part !== "").join("\n");
+}
+function formatTime2(ts) {
+  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return "";
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+function buildSaveDoc(doc) {
+  const meta = {
+    schema: 1,
+    title: String(doc.title ?? ""),
+    savedAt: Number.isFinite(doc.savedAt) ? doc.savedAt : Date.now(),
+    rootTitle: String(doc.rootTitle ?? ""),
+    sessionId: String(doc.sessionId ?? ""),
+    atSeq: Number.isFinite(doc.atSeq) ? Math.floor(doc.atSeq) : null,
+    assistantName: String(doc.assistantName ?? ""),
+    turns: Number.isFinite(doc.turns) ? Math.floor(doc.turns) : 0,
+    auto: doc.auto === true
+  };
+  const header = "<!-- gal-view-save v1 " + JSON.stringify(meta) + " -->";
+  const lines = Array.isArray(doc.lines) ? doc.lines : [];
+  const body = [];
+  body.push("# " + meta.title);
+  const savedAtText = formatTime2(meta.savedAt);
+  body.push("");
+  body.push("> \u5B58\u6863\u65F6\u95F4:" + (savedAtText === "" ? "\u672A\u77E5" : savedAtText) + " \xB7 \u4E3B\u7EBF\u7A0B:" + (meta.rootTitle === "" ? "\u672A\u77E5" : meta.rootTitle) + " \xB7 \u56DE\u5408\u6570:" + meta.turns + " \xB7 \u7C7B\u578B:" + (meta.auto ? "\u81EA\u52A8\u5B58\u6863" : "\u624B\u52A8\u5B58\u6863"));
+  body.push("");
+  body.push("## \u5BF9\u8BDD\u8BB0\u5F55");
+  body.push("");
+  for (const line of lines) {
+    if (line === null || typeof line !== "object") continue;
+    const role = line.kind === "player" || line.kind === "assistant" ? line.kind : "system";
+    body.push(markOfRole(role) + encodeLine(line.text));
+  }
+  body.push("");
+  body.push("---");
+  body.push("");
+  body.push("> \u672C\u6587\u4EF6\u7531 GAL \u89C6\u7A97\u81EA\u52A8\u751F\u6210\u3002\u8BFB\u6863\u4F18\u5148\u8D70\u5B98\u65B9\u4F1A\u8BDD\u5206\u53C9(\u6309\u5B58\u6863\u70B9 seq \u8FD8\u539F\u591A\u8F6E\u6C14\u6CE1);");
+  body.push("> \u6B64\u6587\u4EF6\u540C\u65F6\u662F\u53EF\u89C1\u7684\u8BB0\u5F55\u526F\u672C,\u53EF\u5907\u4EFD/\u590D\u5236/\u5220\u9664\u3002");
+  body.push("");
+  return header + "\n" + body.join("\n");
+}
+function parseSaveDoc(text) {
+  if (typeof text !== "string" || text === "") return null;
+  const firstLine = text.slice(0, 4096).split("\n", 1)[0] ?? "";
+  const m = /^<!--\s*gal-view-save\s+v1\s+(\{.*\})\s*-->$/.exec(firstLine.trim());
+  if (m === null) return null;
+  let meta;
+  try {
+    meta = JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
+  if (meta === null || typeof meta !== "object" || meta.schema !== 1) return null;
+  if (typeof meta.title !== "string" || typeof meta.sessionId !== "string") return null;
+  const lines = [];
+  const body = text.split("\n").slice(1);
+  let current = null;
+  for (const raw of body) {
+    const role = roleOfMark(raw);
+    if (role !== null) {
+      const mark = markOfRole(role);
+      current = { kind: role, text: decodeLine(raw.slice(mark.length)) };
+      lines.push(current);
+    } else if (current !== null && raw.trim() !== "" && !raw.startsWith("#") && !raw.startsWith("-") && !raw.startsWith(">")) {
+      current.text += "\n" + raw;
+    }
+  }
+  return {
+    meta: {
+      schema: 1,
+      title: meta.title,
+      savedAt: Number.isFinite(meta.savedAt) ? meta.savedAt : 0,
+      rootTitle: typeof meta.rootTitle === "string" ? meta.rootTitle : "",
+      sessionId: meta.sessionId,
+      atSeq: Number.isFinite(meta.atSeq) ? Math.floor(meta.atSeq) : null,
+      assistantName: typeof meta.assistantName === "string" ? meta.assistantName : "",
+      turns: Number.isFinite(meta.turns) ? Math.floor(meta.turns) : 0,
+      auto: meta.auto === true
+    },
+    lines
+  };
+}
+function linesToText(lines, assistantName) {
+  const out = [];
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (line === null || typeof line !== "object" || typeof line.text !== "string" || line.text === "") continue;
+    const role = line.kind === "player" ? "\u73A9\u5BB6" : line.kind === "assistant" ? assistantName !== "" ? assistantName : "AI" : "\u7CFB\u7EDF";
+    out.push(role + ":" + line.text);
+  }
+  return out.join("\n");
+}
+function slotIdFromFileName(name2) {
+  const value = String(name2 ?? "");
+  return value.toLowerCase().endsWith(".md") ? value.slice(0, -3) : value;
+}
+function slotFromFileName(name2, prefix) {
+  const id = slotIdFromFileName(name2);
+  if (id === "") return null;
+  const esc = String(prefix).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const saveM = new RegExp("^" + esc + "-save(\\d+)$").exec(id);
+  if (saveM !== null) return { id, n: parseInt(saveM[1], 10), auto: false };
+  const autoM = new RegExp("^" + esc + "-\u81EA\u52A8(\\d+)$").exec(id);
+  if (autoM !== null) return { id, n: parseInt(autoM[1], 10), auto: true };
+  return null;
+}
+function nextFileSlotId(prefix, existingIds, auto) {
+  let max = 0;
+  for (const id of existingIds) {
+    const m = auto ? new RegExp("^" + String(prefix).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-\u81EA\u52A8(\\d+)$").exec(id) : new RegExp("^" + String(prefix).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-save(\\d+)$").exec(id);
+    if (m !== null) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  return String(prefix) + (auto ? "-\u81EA\u52A8" : "-save") + (max + 1);
+}
+function fileSlotPrefix(rootTitle) {
+  return saveRootPrefix(rootTitle);
+}
+function isAncestorOf(byId, ancestorId, id) {
+  if (typeof ancestorId !== "string" || ancestorId === "" || typeof id !== "string" || id === "") return false;
+  let cursor = id;
+  let depth = 0;
+  while (cursor !== "" && depth < 128) {
+    if (cursor === ancestorId) return true;
+    const entry = byId?.[cursor];
+    if (entry === null || entry === void 0) return false;
+    const parent = typeof entry.parentId === "string" && entry.parentId !== "" ? entry.parentId : typeof entry.parentSessionId === "string" && entry.parentSessionId !== "" ? entry.parentSessionId : null;
+    if (parent === null) return false;
+    cursor = parent;
+    depth += 1;
+  }
+  return false;
+}
+
+// .dsh-plugin/client/fsaccess.mjs
+var IDB_NAME = "gal-view-fs";
+var IDB_STORE = "handles";
+var IDB_KEY = "dir";
+var SAVES_DIR = ".gal-view-saves";
+function openIdb() {
+  return new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === "undefined") {
+        resolve(null);
+        return;
+      }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+async function loadDirHandle() {
+  const db = await openIdb();
+  if (db === null) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    } finally {
+      try {
+        db.close();
+      } catch {
+      }
+    }
+  });
+}
+async function storeDirHandle(handle) {
+  const db = await openIdb();
+  if (db === null || handle === null || handle === void 0) return;
+  try {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
+  } catch {
+  } finally {
+    try {
+      db.close();
+    } catch {
+    }
+  }
+}
+function fsAccessSupported() {
+  return typeof window !== "undefined" && typeof window.showDirectoryPicker === "function" && typeof window.isSecureContext === "boolean" && window.isSecureContext;
+}
+async function pickDirectory() {
+  if (!fsAccessSupported()) return null;
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    if (handle === null || handle === void 0) return null;
+    await storeDirHandle(handle);
+    return handle;
+  } catch (error) {
+    console.warn("[gal-view:fs] \u9009\u62E9\u5B58\u6863\u76EE\u5F55\u5931\u8D25:", error);
+    return null;
+  }
+}
+async function resolveSaveDir() {
+  if (!fsAccessSupported()) return null;
+  const handle = await loadDirHandle();
+  if (handle === null || handle === void 0) return null;
+  try {
+    const permission = await handle.queryPermission({ mode: "readwrite" });
+    if (permission !== "granted") {
+      const asked = await handle.requestPermission({ mode: "readwrite" });
+      if (asked !== "granted") return null;
+    }
+    return await handle.getDirectoryHandle(SAVES_DIR, { create: true });
+  } catch (error) {
+    console.warn("[gal-view:fs] \u6253\u5F00\u5B58\u6863\u76EE\u5F55\u5931\u8D25:", error);
+    return null;
+  }
+}
+async function listSaveFiles(dir) {
+  const names = [];
+  try {
+    for await (const [name2, handle] of dir.entries()) {
+      if (handle !== null && typeof handle === "object" && handle.kind === "file") names.push(name2);
+    }
+  } catch (error) {
+    console.warn("[gal-view:fs] \u5217\u4E3E\u5B58\u6863\u76EE\u5F55\u5931\u8D25:", error);
+  }
+  return names;
+}
+async function writeSaveFile(dir, name2, text) {
+  const safeName = String(name2).replace(/[\\/:*?"<>|]/g, "_");
+  const tmpName = "." + safeName + ".tmp";
+  try {
+    const tmp = await dir.getFileHandle(tmpName, { create: true });
+    const writable = await tmp.createWritable();
+    await writable.write(text);
+    await writable.close();
+  } catch (error) {
+    throw new Error("\u5199\u5165\u4E34\u65F6\u6587\u4EF6\u5931\u8D25:" + (error?.message ?? String(error)));
+  }
+  try {
+    const target = await dir.getFileHandle(safeName, { create: true });
+    const writable = await target.createWritable();
+    await writable.write(text);
+    await writable.close();
+    try {
+      await dir.removeEntry(tmpName);
+    } catch {
+    }
+  } catch (error) {
+    throw new Error("\u5199\u5165\u5B58\u6863\u5931\u8D25:" + (error?.message ?? String(error)));
+  }
+}
+async function readSaveFile(dir, name2) {
+  try {
+    const handle = await dir.getFileHandle(name2);
+    const file = await handle.getFile();
+    return await file.text();
+  } catch {
+    return null;
+  }
+}
+async function removeSaveFile(dir, name2) {
+  try {
+    await dir.removeEntry(name2);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function downloadTextFile(name2, text) {
+  try {
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name2;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4e3);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -5509,10 +5945,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         } catch {
         }
       }
-      if (this.currentSessionId() === oldCurrent) {
-        console.warn("[gal-view:save] load: \u5F53\u524D\u4F1A\u8BDD\u4ECD\u672A\u5207\u6362,\u653E\u5F03\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", oldCurrent);
+      if (ARCHIVE_OLD_ON_LOAD) {
+        if (this.currentSessionId() === oldCurrent) {
+          console.warn("[gal-view:save] load: \u5F53\u524D\u4F1A\u8BDD\u4ECD\u672A\u5207\u6362,\u653E\u5F03\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", oldCurrent);
+        } else {
+          await this.archiveSessionQuiet(oldCurrent);
+        }
       } else {
-        await this.archiveSessionQuiet(oldCurrent);
+        console.info("[gal-view:save] load: \u6D4B\u8BD5\u671F\u4E0D\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", oldCurrent);
       }
       this.noteSaveOp();
       return { childId };
@@ -5528,10 +5968,182 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (list === void 0 || list === null || typeof list.subscribe !== "function") return () => {
       };
       return list.subscribe(cb);
+    },
+    // ---- 文件式存档（SAVE 写文件零官方干预 / LOAD fork-atSeq 优先） ----
+    /** 存档目录状态:{ supported, ready }。supported=浏览器支持 FS Access API。 */
+    saveDirStatus() {
+      return { supported: fsAccessSupported() };
+    },
+    /** 用户手势内调用:选一次工程文件夹(句柄持久化,之后静默)。返回是否成功。 */
+    async ensureSaveDir() {
+      if (!fsAccessSupported()) return false;
+      const dir = await resolveSaveDir();
+      if (dir !== null) return true;
+      const picked = await pickDirectory();
+      return picked !== null;
+    },
+    /** 扫描目录列出文件槽位(读每个文件头解析元数据;损坏/非本插件文件跳过)。 */
+    async listFileSlots() {
+      const dir = await resolveSaveDir();
+      const saves = [];
+      const autos = [];
+      const broken = [];
+      if (dir === null) return { ready: false, rootTitle: "", saves, autos, broken };
+      const names = await listSaveFiles(dir);
+      for (const name2 of names) {
+        const id = slotIdFromFileName(name2);
+        if (id === "") continue;
+        const text = await readSaveFile(dir, name2);
+        if (text === null) {
+          broken.push(name2);
+          continue;
+        }
+        const doc = parseSaveDoc(text);
+        if (doc === null) {
+          broken.push(name2);
+          continue;
+        }
+        const entry = {
+          id,
+          name: name2,
+          title: doc.meta.title,
+          savedAt: doc.meta.savedAt,
+          turns: doc.meta.turns,
+          auto: doc.meta.auto
+        };
+        if (doc.meta.auto) autos.push(entry);
+        else saves.push(entry);
+      }
+      saves.sort((a, b) => a.id.localeCompare(b.id, "zh-Hans-CN", { numeric: true }));
+      autos.sort((a, b) => a.id.localeCompare(b.id, "zh-Hans-CN", { numeric: true }));
+      const mainTitle = this.mainTitle();
+      return { ready: true, rootTitle: mainTitle, saves, autos, broken };
+    },
+    /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
+     * payload: { title, auto, rootTitle, sessionId, atSeq, assistantName, turns, lines } */
+    async saveSlotFile(payload) {
+      const dir = await resolveSaveDir();
+      if (dir === null) {
+        const text2 = buildSaveDoc(payload);
+        const name3 = String(payload.title ?? "gal-save") + ".md";
+        if (downloadTextFile(name3, text2)) {
+          return { id: name3, title: payload.title, fallback: true };
+        }
+        throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939(\u70B9\u51FB\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D\u6388\u6743\u4E00\u6B21)");
+      }
+      if (payload.atSeq === null || payload.atSeq === void 0) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
+      const existing = await listSaveFiles(dir);
+      const ids = existing.map(slotIdFromFileName).filter((id2) => id2 !== "");
+      const prefix = fileSlotPrefix(payload.rootTitle);
+      const id = nextFileSlotId(prefix, ids, payload.auto === true);
+      const title = typeof payload.title === "string" && payload.title !== "" ? payload.title : id;
+      const name2 = id + ".md";
+      const text = buildSaveDoc({ ...payload, title });
+      await writeSaveFile(dir, name2, text);
+      console.info("[gal-view:save] \u5B58\u6863\u6587\u4EF6\u5199\u5165:", name2, "(atSeq=" + payload.atSeq + ")");
+      if (payload.auto === true) {
+        for (const oldName of existing) {
+          const slot = slotFromFileName(oldName, prefix);
+          if (slot !== null && slot.auto && slot.id !== id) {
+            await removeSaveFile(dir, oldName);
+            console.info("[gal-view:save] \u6E05\u7406\u65E7\u81EA\u52A8\u6863\u6587\u4EF6:", oldName);
+          }
+        }
+      }
+      this.noteSaveOp();
+      return { id, name: name2, title, fallback: false };
+    },
+    /** 读文件存档:解析 → fork(当前主线, atSeq=存档点) → 打开新线。
+     * 测试期不归档旧线(ARCHIVE_OLD_ON_LOAD=false)。
+     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入。 */
+    async loadSaveFile(id) {
+      const dir = await resolveSaveDir();
+      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
+      const text = await readSaveFile(dir, name2);
+      if (text === null) throw new Error("\u5B58\u6863\u6587\u4EF6\u5DF2\u4E22\u5931(\u53EF\u80FD\u88AB\u79FB\u52A8\u6216\u5220\u9664)");
+      const doc = parseSaveDoc(text);
+      if (doc === null) throw new Error("\u5B58\u6863\u6587\u4EF6\u65E0\u6CD5\u89E3\u6790(\u683C\u5F0F\u635F\u574F\u6216\u4E0D\u662F\u672C\u63D2\u4EF6\u751F\u6210\u7684\u5B58\u6863)");
+      const mainId = this.currentSessionId();
+      if (mainId === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      const mainTitle = this.mainTitle();
+      console.info("[gal-view:save] load-file: \u89E3\u6790\u6210\u529F", doc.meta.title, "atSeq=" + String(doc.meta.atSeq), "sessionId=" + doc.meta.sessionId);
+      const snapForChain = sessionsSvc?.list?.getSnapshot?.() ?? null;
+      const byId = snapForChain !== null && typeof snapForChain === "object" ? snapForChain.byId ?? {} : {};
+      const anchored = doc.meta.sessionId === mainId || isAncestorOf(byId, doc.meta.sessionId, mainId);
+      try {
+        if (!anchored) {
+          console.warn("[gal-view:save] load-file: \u5B58\u6863\u4F1A\u8BDD\u4E0D\u5728\u5F53\u524D\u4E3B\u7EBF\u7956\u5148\u94FE\u4E0A,\u8DF3\u8FC7 fork-atSeq,\u964D\u7EA7\u4E3A\u5185\u5BB9\u7EA7\u8FD8\u539F:", doc.meta.sessionId, "\u2192", mainId);
+          throw new Error("worldline-detached");
+        }
+        if (!this.hasSessionsService()) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9");
+        if (doc.meta.atSeq === null) throw new Error("\u8BE5\u5B58\u6863\u6CA1\u6709\u5B58\u6863\u70B9,\u65E0\u6CD5\u6309\u5206\u53C9\u8FD8\u539F");
+        const childId = await sessionsSvc.fork({ sessionId: mainId, atSeq: doc.meta.atSeq });
+        console.info("[gal-view:save] load-file: fork-atSeq \u5B8C\u6210", childId);
+        await sessionsSvc.open(childId);
+        await this.waitCurrentIs(childId, 2e3);
+        if (mainTitle !== "" && mainTitle !== doc.meta.title) {
+          try {
+            const binding = sessionsSvc.binding?.(childId);
+            const session = binding?.session ?? null;
+            if (session !== null && typeof session.rename === "function") await session.rename(mainTitle);
+          } catch {
+          }
+        }
+        if (ARCHIVE_OLD_ON_LOAD) {
+          if (this.currentSessionId() === mainId) {
+            console.warn("[gal-view:save] load-file: \u5F53\u524D\u4F1A\u8BDD\u4ECD\u672A\u5207\u6362,\u653E\u5F03\u5F52\u6863\u65E7\u7EBF:", mainId);
+          } else {
+            await this.archiveSessionQuiet(mainId);
+          }
+        } else {
+          console.info("[gal-view:save] load-file: \u6D4B\u8BD5\u671F\u4E0D\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", mainId);
+        }
+        this.noteSaveOp();
+        return { childId, mode: "fork", lines: doc.lines, title: doc.meta.title };
+      } catch (cause) {
+        console.warn("[gal-view:save] load-file: fork \u8FD8\u539F\u5931\u8D25,\u964D\u7EA7\u4E3A\u5185\u5BB9\u7EA7\u8FD8\u539F:", cause);
+        if (!this.hasSessionsService() || typeof sessionsSvc.create !== "function") throw cause;
+        const created = await sessionsSvc.create({});
+        const createdId = typeof created === "string" ? created : created?.sessionId ?? created?.value?.sessionId;
+        if (typeof createdId !== "string" || createdId === "") throw cause;
+        await sessionsSvc.open(createdId);
+        const recordText = linesToText(doc.lines, doc.meta.assistantName);
+        this.noteSaveOp();
+        return { childId: createdId, mode: "inject", lines: doc.lines, title: doc.meta.title, recordText };
+      }
+    },
+    /** 删除文件存档(直接删文件;不存在返回 false)。 */
+    async deleteSlotFile(id) {
+      const dir = await resolveSaveDir();
+      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
+      const removed = await removeSaveFile(dir, name2);
+      console.info("[gal-view:save] \u5220\u9664\u5B58\u6863\u6587\u4EF6:", name2, "->", String(removed));
+      return removed;
+    },
+    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。 */
+    async pageFullHistory() {
+      const id = this.currentSessionId();
+      if (id === null) return;
+      const session = sessionsSvc?.binding?.(id)?.session ?? null;
+      if (session === null || typeof session.loadOlder !== "function") return;
+      let guard = 0;
+      while (session.hasMore === true && session.loadingOlder !== true && guard < 60) {
+        guard += 1;
+        try {
+          await session.loadOlder();
+        } catch (cause) {
+          console.warn("[gal-view:save] \u5386\u53F2\u56DE\u62C9\u4E2D\u65AD:", cause);
+          break;
+        }
+      }
+      if (guard >= 60) console.warn("[gal-view:save] \u5386\u53F2\u56DE\u62C9\u8FBE\u5230\u4E0A\u9650,\u8BB0\u5F55\u53EF\u80FD\u4E0D\u5B8C\u6574(\u524D 3000 \u6761\u5185)");
     }
   };
 }
 var SLOTS_KEY = "gal-view:slots";
+var ARCHIVE_OLD_ON_LOAD = false;
 function isSlotTitle(title) {
   return /-save\d+$/.test(title) || /-自动\d+$/.test(title);
 }

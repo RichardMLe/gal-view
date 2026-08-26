@@ -12,7 +12,6 @@ import {
   nodesToLines, partialToText, deriveActivity, speakerFor, welcomeLine, assistantDisplayName,
 } from './transcript.mjs'
 import { splitPages, createFitsMeasurer } from './paging.mjs'
-import { saveRootPrefix, nextSaveTitle } from './save.mjs'
 import { normalizePersona } from './persona.mjs'
 
 /** 玩家消息完整显示后的最短滞留时长（此后由模型状态触发翻页）。 */
@@ -130,7 +129,7 @@ function SettingsPanel({ scene, api, onClose }) {
           }}
         />
       </label>
-      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」快照（0 = 关闭）；自动快照仅保留最新一个。存档/读档会在回复完全落定后执行，不打断对话。</p>
+      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」存档（0 = 关闭）；自动存档仅保留最新一个。存档保存为工程目录 .gal-view-saves 下的文件（首次使用请在存档面板选择工程文件夹）；读档按存档点还原多轮对话，测试期旧对话保留不销毁。</p>
     </div>
   )
 }
@@ -139,50 +138,64 @@ function SettingsPanel({ scene, api, onClose }) {
  * SAVE = 当前会话最后已完成回合冻结为快照槽（xx-saveN / xx-自动N），永不改变；
  * LOAD = 从槽派生新世界线 → 切换 → 销毁旧世界线（归档，列表消失）。
  * 宿主不支持会话服务时给出可读提示，不抛错。 */
-function SavePanel({ api, mode, onClose, running }) {
-  const [index, setIndex] = useState(() => loadSaveIndex(api))
-  const [current, setCurrent] = useState(() => loadCurrentSession(api))
+function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
+  const [index, setIndex] = useState(null)
+  const [legacy, setLegacy] = useState(() => loadSaveIndex(api))
   const [busy, setBusy] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [editText, setEditText] = useState('')
-  const refresh = useCallback(() => {
-    setIndex(loadSaveIndex(api))
-    setCurrent(loadCurrentSession(api))
+  const refresh = useCallback(async () => {
+    setLegacy(loadSaveIndex(api))
+    if (typeof api?.listFileSlots !== 'function') { setIndex(null); return }
+    try {
+      setIndex(await api.listFileSlots())
+    } catch {
+      setIndex(null)
+    }
   }, [api])
   useEffect(() => {
-    refresh()
+    void refresh()
     if (typeof api?.onSessions !== 'function') return
-    return api.onSessions(refresh)
+    return api.onSessions(() => { void refresh() })
   }, [api, refresh])
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('keydown', onKey) }
   }, [onClose])
+  const pickDir = async () => {
+    if (picking || busy) return
+    setPicking(true)
+    setError(null)
+    try {
+      if (typeof api?.ensureSaveDir !== 'function') throw new Error('当前环境不支持文件夹写入')
+      const ok = await api.ensureSaveDir()
+      if (!ok) setNotice('已取消选择；此环境存档将下载到「下载」文件夹')
+      await refresh()
+    } catch (cause) {
+      setError(causeText(cause))
+    }
+    setPicking(false)
+  }
   const save = async () => {
     if (busy) return
-    if (typeof api?.saveSlot !== 'function' || api.hasSessionsService() !== true) {
-      setError('当前环境不支持会话分叉（sessions 服务不可用）')
+    if (typeof onRequestSave !== 'function') {
+      setError('当前环境不支持存档')
       return
     }
     setBusy(true)
     setError(null)
     setNotice(null)
     try {
-      // 落定闸门：等主机摘要 running=false 且连续静默后才 fork——对未落定的
-      // 活跃会话 fork 会打断官方会话窗口（对话整段消失）。超时给出可读提示。
-      if (typeof api?.waitSettled === 'function') {
-        setNotice('正在等待回合落定…')
-        const gate = await api.waitSettled({ quietMs: 2500, timeoutMs: 15000 })
-        if (!gate.settled) throw new Error('回复尚未完全落定，请稍后再存档')
-        if (!gate.completed) throw new Error('还没有已完成的回合，先聊几句再存档吧')
-      }
-      setNotice(null)
-      const result = await api.saveSlot()
-      setNotice('已创建快照「' + result.title + '」（永久保存，读档也不会改变它）')
-      refresh()
+      setNotice('正在等待回合落定并整理记录…')
+      const result = await onRequestSave()
+      setNotice(result !== null && result.fallback === true
+        ? '已下载存档文件（此环境不支持文件夹写入，请把文件放进工程 .gal-view-saves 文件夹）'
+        : '已创建存档「' + result.title + '」（永久保存，读档也不会改变它）')
+      await refresh()
     } catch (cause) {
       setError(causeText(cause))
       setNotice(null)
@@ -190,18 +203,34 @@ function SavePanel({ api, mode, onClose, running }) {
     setBusy(false)
   }
   const load = async (id) => {
-    if (busy) return
+    if (busy || running === true) return
     setBusy(true)
     setError(null)
     try {
-      await api.loadSave(id)
+      if (typeof api?.loadSaveFile !== 'function') throw new Error('当前环境不支持文件读档')
+      const result = await api.loadSaveFile(id)
+      if (typeof onLoaded === 'function') onLoaded(result)
       onClose()
     } catch (cause) {
       setError(causeText(cause))
       setBusy(false)
     }
   }
-  // 手动存档改名：点击名称进入编辑，Enter/失焦提交，Escape 取消。
+  const remove = async (slot) => {
+    if (busy) return
+    if (typeof window.confirm === 'function' && !window.confirm('删除存档「' + slot.title + '」？文件将被永久删除。')) return
+    setBusy(true)
+    setError(null)
+    try {
+      if (typeof api?.deleteSlotFile !== 'function') throw new Error('当前环境不支持删除存档')
+      await api.deleteSlotFile(slot.id)
+      await refresh()
+    } catch (cause) {
+      setError(causeText(cause))
+    }
+    setBusy(false)
+  }
+  // 旧式槽位（会话分叉式）：读档走原 fork 槽路径；改名仅手动槽。
   const beginRename = (slot) => {
     setEditingId(slot.id)
     setEditText(slot.title)
@@ -217,13 +246,39 @@ function SavePanel({ api, mode, onClose, running }) {
       if (typeof api?.renameSlot !== 'function') throw new Error('当前环境不支持改名')
       await api.renameSlot(slot.id, text)
       setEditingId(null)
-      refresh()
+      await refresh()
     } catch (cause) {
       setError(causeText(cause))
     }
   }
-  const nextTitle = nextSaveTitle(saveRootPrefix(index.rootTitle), index.saves.map(s => s.n))
-  const renderSlotRows = (slots, isAuto) => slots.map(s => {
+  const loadLegacy = async (id) => {
+    if (busy || running === true) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.loadSave(id)
+      onClose()
+    } catch (cause) {
+      setError(causeText(cause))
+      setBusy(false)
+    }
+  }
+  const dirReady = index !== null && index.ready === true
+  const brokenCount = index !== null && Array.isArray(index.broken) ? index.broken.length : 0
+  const renderFileSlot = (s) => (
+    <div className="gv-saves-row" key={s.id}>
+      <span className="gv-saves-name">{s.title}</span>
+      <span className="gv-saves-time">{formatTime(s.savedAt)}{s.turns > 0 ? ' · ' + s.turns + ' 回合' : ''}</span>
+      {s.auto === true && <span className="gv-saves-badge">自动</span>}
+      {mode === 'load' && (
+        <button type="button" className="gv-btn" disabled={busy || running === true} onClick={() => load(s.id)}>读取</button>
+      )}
+      {mode === 'save' && (
+        <button type="button" className="gv-btn" disabled={busy} onClick={() => remove(s)}>删除</button>
+      )}
+    </div>
+  )
+  const renderLegacyRows = (slots, isAuto) => slots.map(s => {
     const editing = !isAuto && editingId === s.id
     return (
       <div className="gv-saves-row" key={s.id}>
@@ -247,11 +302,12 @@ function SavePanel({ api, mode, onClose, running }) {
         <span className="gv-saves-time">{formatTime(s.updatedAt)}</span>
         {isAuto && <span className="gv-saves-badge">自动</span>}
         {mode === 'load' && (
-          <button type="button" className="gv-btn" disabled={busy || running === true} onClick={() => load(s.id)}>读取</button>
+          <button type="button" className="gv-btn" disabled={busy || running === true} onClick={() => loadLegacy(s.id)}>读取</button>
         )}
       </div>
     )
   })
+  const hasLegacy = legacy.saves.length > 0 || legacy.autos.length > 0
   return (
     <div className="gv-saves-layer" role="dialog" aria-label={mode === 'save' ? '存档' : '读档'}>
       <div className="gv-saves">
@@ -259,25 +315,34 @@ function SavePanel({ api, mode, onClose, running }) {
           <span>{mode === 'save' ? '存档' : '读档'}</span>
           <button type="button" className="gv-btn" onClick={onClose}>关闭</button>
         </div>
+        <div className="gv-saves-dir">
+          <span className="gv-saves-dir-label">
+            {dirReady ? '存档文件夹：工程目录 \\.gal-view-saves' : '存档文件夹：未选择（首次使用请选择工程文件夹）'}
+            {brokenCount > 0 ? ' · ' + brokenCount + ' 个文件无法识别' : ''}
+          </span>
+          <button type="button" className="gv-btn" disabled={picking || busy} onClick={pickDir}>
+            {picking ? '选择中…' : (dirReady ? '重新选择' : '选择存档文件夹')}
+          </button>
+        </div>
         {mode === 'save'
-          ? <p className="gv-saves-hint">存档 = 冻结当前进度的快照「{saveRootPrefix(index.rootTitle)}-save…」，之后读档永远不会改变它。</p>
-          : <p className="gv-saves-hint">读取存档 = 从快照重开一条世界线，旧世界线销毁。之后的对话发生在新线上。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
-        {index.rootTitle !== '' && (
-          <p className="gv-saves-meta">主线程「{index.rootTitle}」</p>
-        )}
+          ? <p className="gv-saves-hint">存档 = 把当前对话记录写成工程 .gal-view-saves 文件夹里的文件（永久保存，读档不会改变它）；读档按存档点还原多轮对话。</p>
+          : <p className="gv-saves-hint">读取存档 = 按存档点切出新世界线继续（测试期旧世界线保留，不销毁）。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
         <div className="gv-saves-list">
-          {/* 自动存档槽位常驻（放在手动存档上面）；仅保留最新一个。 */}
-          <div className="gv-saves-group">自动存档</div>
-          {index.autos.length > 0
-            ? renderSlotRows(index.autos, true)
+          <div className="gv-saves-group">自动存档（文件）</div>
+          {index !== null && index.autos.length > 0
+            ? index.autos.map(renderFileSlot)
             : <div className="gv-saves-empty gv-saves-auto-empty">当前无自动存档</div>}
-          <div className="gv-saves-group">手动存档</div>
-          {index.saves.length === 0 && <div className="gv-saves-empty">还没有手动存档</div>}
-          {renderSlotRows(index.saves, false)}
+          <div className="gv-saves-group">手动存档（文件）</div>
+          {index !== null && index.saves.length === 0 && <div className="gv-saves-empty">还没有手动存档</div>}
+          {index !== null && index.saves.map(renderFileSlot)}
+          {index === null && <div className="gv-saves-empty">文件存档不可用（当前浏览器环境不支持）</div>}
+          {hasLegacy && <div className="gv-saves-group">旧式存档（会话槽，兼容读取）</div>}
+          {hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true)}
+          {hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false)}
         </div>
         {mode === 'save' && (
           <button type="button" className="gv-btn gv-btn-gold gv-saves-create" disabled={busy} onClick={save}>
-            创建存档（{nextTitle}）
+            创建存档
           </button>
         )}
         {error !== null && <p className="gv-saves-error">{error}</p>}
@@ -401,7 +466,10 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
 
   const lines = useMemo(() => nodesToLines(nodes), [nodes])
   const liveText = running ? partialToText(partial) : ''
-  const lastLine = lines.length > 0 ? lines[lines.length - 1] : null
+  // 内容级还原（inject 回退）的记录行：新会话无真实历史时用于展示与续写。
+  const [restoredLines, setRestoredLines] = useState(null)
+  const displayLines = (lines.length > 0 || restoredLines === null || restoredLines.length === 0) ? lines : restoredLines
+  const lastLine = displayLines.length > 0 ? displayLines[displayLines.length - 1] : null
   // ---- 自动存档（主线程快照）----
   // 回合数取 sessionStats 投影的 durable turns（每完成一轮对话 +1，与渲染批次/回复快慢无关；
   // 投影缺失时回退窗口内玩家行数）。每完成 autoSaveEvery 次回合（默认 10，0=关）且
@@ -436,23 +504,59 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     if (typeof api?.onSessions !== 'function') return undefined
     return api.onSessions(() => setSettleTick(t => t + 1))
   }, [api])
+  // 存档采集：把当前会话历史整段回拉进窗口（官方 loadOlder 分页通道），
+  // 再取台词行与存档点 seq。纯读取+写文件，不碰官方会话系统（不 fork）。
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
+  const captureRecord = useCallback(async () => {
+    const sessionIdValue = typeof api?.currentSessionId === 'function' ? api.currentSessionId() : null
+    if (sessionIdValue === null) return null
+    if (typeof api?.pageFullHistory === 'function') {
+      try { await api.pageFullHistory() } catch (cause) {
+        console.warn('[gal-view:save] 历史回拉失败:', cause)
+      }
+      // 回拉后等 React 把新节点渲染进窗口再读取(nodesRef 在渲染时更新):
+      // 轮询直到节点数连续两次稳定(上限约 1s),避免采集到未回拉前的旧窗口。
+      let stable = 0
+      let prevLen = -1
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0
+        if (len === prevLen) stable += 1
+        else stable = 0
+        prevLen = len
+        if (stable >= 2) break
+      }
+    }
+    const list = Array.isArray(nodesRef.current) ? nodesRef.current : []
+    const recLines = nodesToLines(list)
+    const lastNode = list[list.length - 1]
+    return {
+      sessionId: sessionIdValue,
+      rootTitle: typeof api?.mainTitle === 'function' ? api.mainTitle() : '',
+      assistantName: assistantDisplayName(scene),
+      lines: recLines,
+      turns: recLines.filter(l => l.kind === 'player').length,
+      atSeq: lastNode !== undefined && typeof lastNode.seq === 'number' ? lastNode.seq : null,
+    }
+  }, [api, scene])
+  // 文件式自动存档：每 autoSaveEvery 回合写一个文件（零官方干预），仅保留最新自动档。
   useEffect(() => {
     const ref = autoSaveRef.current
     if (autoSaveEvery <= 0 || ref.saving || ref.trying) return
     if (turns - ref.baseline < autoSaveEvery) return
     if (running || (Array.isArray(pending) && pending.length > 0)) return
-    if (typeof api?.autoSave !== 'function' || typeof api?.waitSettled !== 'function' || api.hasSessionsService() !== true) return
+    if (typeof api?.saveSlotFile !== 'function' || typeof api?.waitSettled !== 'function') return
     const currentTurns = turns
     const currentEvery = autoSaveEvery
     ref.trying = true
-    // 落定闸门：等主机摘要 running=false 且连续 2.5s 无会话列表变化后才 fork。
-    // 不再盲等固定时长——对未落定的活跃会话 fork 会打断官方会话窗口
-    // （对话整段消失、只剩工具调用卡片）。未落定就放弃本轮，下次结算重试。
+    // 轻量落定闸门：只读+写文件，不再 fork；等待静默是为保证 loadOlder 回拉
+    // 不在流式中进行、记录采集稳定。
     api.waitSettled({
-      quietMs: 2500,
+      quietMs: 1500,
       timeoutMs: 30000,
       shouldContinue: () => runningRef.current === false && autoSaveRef.current.key === autoKey,
-    }).then(gate => {
+    }).then(async gate => {
       const r = autoSaveRef.current
       r.trying = false
       if (r.saving || r.key !== autoKey) return
@@ -460,26 +564,32 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
         console.info('[gal-view] 自动存档:回合未落定,跳过本轮(下次结算重试)')
         return
       }
-      if (!gate.completed) {
-        console.info('[gal-view] 自动存档:尚无已完成回合,跳过')
-        return
-      }
-      r.baseline = currentTurns
-      try { window.localStorage.setItem(autoKey, String(r.baseline)) } catch { /* 忽略 */ }
       r.saving = true
-      api.autoSave().then(
-        () => {
+      try {
+        const rec = await captureRecord()
+        if (rec === null || rec.atSeq === null) {
+          console.info('[gal-view] 自动存档:尚无已完成的对话,跳过')
           r.saving = false
-          console.info('[gal-view] 自动存档完成(间隔 ' + currentEvery + ' 轮)')
-        },
-        (cause) => {
-          r.saving = false
-          r.baseline = Math.max(0, r.baseline - currentEvery)
-          console.warn('[gal-view] 自动存档失败:', cause)
-        },
-      )
+          return
+        }
+        await api.saveSlotFile({
+          auto: true,
+          rootTitle: rec.rootTitle,
+          sessionId: rec.sessionId,
+          atSeq: rec.atSeq,
+          assistantName: rec.assistantName,
+          turns: rec.turns,
+          lines: rec.lines,
+        })
+        r.baseline = currentTurns
+        try { window.localStorage.setItem(autoKey, String(r.baseline)) } catch { /* 忽略 */ }
+        console.info('[gal-view] 自动存档完成(间隔 ' + currentEvery + ' 轮)')
+      } catch (cause) {
+        console.warn('[gal-view] 自动存档失败:', cause)
+      }
+      r.saving = false
     })
-  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick])
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, captureRecord])
   // 对话行骤降看门狗(仅记录,不干预):同一会话内 nodes 数量骤降(>50%)且非
   // 运行中,说明官方会话窗口被重装成了不完整尾部。只打日志——自动 resync
   // 会与官方合法的尾部页重装(>50 条长对话 repairGap 只保留尾部 50 条)误判,
@@ -832,6 +942,44 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   }, [running, type.done, hasNextPage, pageIndex, skipTyping])
   const send = useSend(inputActions, draft, () => setSharedDraft(''))
 
+  // ---- 文件式存档/读档 ----
+  // 手动存档:轻量落定 → 采集记录 → 写文件(api 内零官方干预)。
+  const requestSave = useCallback(async () => {
+    // 闸门只在 sessions 服务可用时生效(等待回合结束+短暂静默,保证采集稳定);
+    // 无官方服务的独立环境直接采集(文件存档不依赖官方会话系统)。
+    const hasSvc = typeof api?.hasSessionsService === 'function' ? api.hasSessionsService() : false
+    if (hasSvc && typeof api?.waitSettled === 'function') {
+      const gate = await api.waitSettled({ quietMs: 1500, timeoutMs: 15000 })
+      if (!gate.settled) throw new Error('回复尚未完全落定，请稍后再存档')
+    }
+    if (typeof api?.saveSlotFile !== 'function') throw new Error('当前环境不支持文件存档')
+    const rec = await captureRecord()
+    if (rec === null) throw new Error('未找到当前会话')
+    if (rec.atSeq === null) throw new Error('还没有已完成的对话，先聊两句再存档吧')
+    return api.saveSlotFile({
+      auto: false,
+      rootTitle: rec.rootTitle,
+      sessionId: rec.sessionId,
+      atSeq: rec.atSeq,
+      assistantName: rec.assistantName,
+      turns: rec.turns,
+      lines: rec.lines,
+    })
+  }, [api, captureRecord])
+  const requestLoad = useCallback(async (id) => {
+    if (typeof api?.loadSaveFile !== 'function') throw new Error('当前环境不支持文件读档')
+    return api.loadSaveFile(id)
+  }, [api])
+  // 读档结果落地:fork 模式新会话自带真实历史;inject 回退渲染记录行并把记录放进草稿。
+  const handleLoaded = useCallback((result) => {
+    if (result !== null && typeof result === 'object' && result.mode === 'inject' && Array.isArray(result.lines)) {
+      setRestoredLines(result.lines)
+      if (typeof result.recordText === 'string' && result.recordText !== '') setSharedDraft(result.recordText)
+    } else {
+      setRestoredLines(null)
+    }
+  }, [setSharedDraft])
+
   // 透明功能按钮：历史/自动/快进/设置/存档/读档（原底部控制栏已移除，功能由场景内按钮承载）。
   // 动作名归一化（容忍常见别名/中文），点击即分发。
   const handleAction = useCallback(action => {
@@ -975,9 +1123,9 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
         />
       )}
 
-      {historyOpen && <HistoryPanel scene={scene} lines={lines} onClose={() => setHistoryOpen(false)} />}
+      {historyOpen && <HistoryPanel scene={scene} lines={displayLines} onClose={() => setHistoryOpen(false)} />}
       {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} />}
-      {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} running={running} />}
+      {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} running={running} onRequestSave={requestSave} onLoaded={handleLoaded} />}
     </div>
   )
 }

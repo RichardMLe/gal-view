@@ -470,6 +470,14 @@ export const CSS = `
 }
 .gv-saves-hint { margin: 2px 0 0; font-size: 11px; line-height: 1.7; color: var(--gv-text-dim); }
 .gv-saves-meta { margin: 4px 0 0; font-size: 11px; color: var(--gv-text-dim); letter-spacing: .04em; }
+/* 存档文件夹状态行：左侧路径说明 + 右侧选择按钮。 */
+.gv-saves-dir {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 8px; padding: 6px 10px;
+  border: 1px dashed var(--gv-line-strong); border-radius: 4px;
+  background: rgba(16, 20, 38, .4);
+}
+.gv-saves-dir-label { font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
 .gv-saves-list {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin-top: 8px;

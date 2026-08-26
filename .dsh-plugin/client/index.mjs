@@ -26,6 +26,14 @@ import {
 import { createObservable, createHistory, createStorage, loadJSON, saveJSON } from './store.mjs'
 import { saveRootPrefix, rootOf, nextSaveTitle, nextAutoTitle, isValidSlotTitle } from './save.mjs'
 import { waitSettled } from './settle.mjs'
+import {
+  buildSaveDoc, parseSaveDoc, linesToText, slotIdFromFileName, slotFromFileName,
+  nextFileSlotId, fileSlotPrefix, isAncestorOf,
+} from './savefile.mjs'
+import {
+  fsAccessSupported, pickDirectory, resolveSaveDir, listSaveFiles,
+  writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
+} from './fsaccess.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
 import presetScene from '../../gal-scene.json'
@@ -640,11 +648,17 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       }
       // 销毁旧世界线：官方无删除接口，归档（列表消失、可恢复）。
-      // 只有确认已切到新线才归档；未确认时放弃归档（旧线留在列表，绝不冒险）。
-      if (this.currentSessionId() === oldCurrent) {
-        console.warn('[gal-view:save] load: 当前会话仍未切换,放弃归档旧线(旧线保留在工作区):', oldCurrent)
+      // 测试期开关(ARCHIVE_OLD_ON_LOAD=false)：确认 load/save 完全正确前不归档，
+      // 旧线保留在工作区列表，可随时切回对比。
+      if (ARCHIVE_OLD_ON_LOAD) {
+        // 只有确认已切到新线才归档；未确认时放弃归档（旧线留在列表，绝不冒险）。
+        if (this.currentSessionId() === oldCurrent) {
+          console.warn('[gal-view:save] load: 当前会话仍未切换,放弃归档旧线(旧线保留在工作区):', oldCurrent)
+        } else {
+          await this.archiveSessionQuiet(oldCurrent)
+        }
       } else {
-        await this.archiveSessionQuiet(oldCurrent)
+        console.info('[gal-view:save] load: 测试期不归档旧线(旧线保留在工作区):', oldCurrent)
       }
       this.noteSaveOp()
       return { childId }
@@ -660,11 +674,192 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (list === undefined || list === null || typeof list.subscribe !== 'function') return () => {}
       return list.subscribe(cb)
     },
+
+    // ---- 文件式存档（SAVE 写文件零官方干预 / LOAD fork-atSeq 优先） ----
+
+    /** 存档目录状态:{ supported, ready }。supported=浏览器支持 FS Access API。 */
+    saveDirStatus() {
+      return { supported: fsAccessSupported() }
+    },
+    /** 用户手势内调用:选一次工程文件夹(句柄持久化,之后静默)。返回是否成功。 */
+    async ensureSaveDir() {
+      if (!fsAccessSupported()) return false
+      const dir = await resolveSaveDir()
+      if (dir !== null) return true
+      const picked = await pickDirectory()
+      return picked !== null
+    },
+    /** 扫描目录列出文件槽位(读每个文件头解析元数据;损坏/非本插件文件跳过)。 */
+    async listFileSlots() {
+      const dir = await resolveSaveDir()
+      const saves = []
+      const autos = []
+      const broken = []
+      if (dir === null) return { ready: false, rootTitle: '', saves, autos, broken }
+      const names = await listSaveFiles(dir)
+      for (const name of names) {
+        const id = slotIdFromFileName(name)
+        if (id === '') continue
+        const text = await readSaveFile(dir, name)
+        if (text === null) { broken.push(name); continue }
+        const doc = parseSaveDoc(text)
+        if (doc === null) { broken.push(name); continue }
+        const entry = {
+          id,
+          name,
+          title: doc.meta.title,
+          savedAt: doc.meta.savedAt,
+          turns: doc.meta.turns,
+          auto: doc.meta.auto,
+        }
+        if (doc.meta.auto) autos.push(entry)
+        else saves.push(entry)
+      }
+      saves.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
+      autos.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
+      const mainTitle = this.mainTitle()
+      return { ready: true, rootTitle: mainTitle, saves, autos, broken }
+    },
+    /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
+     * payload: { title, auto, rootTitle, sessionId, atSeq, assistantName, turns, lines } */
+    async saveSlotFile(payload) {
+      const dir = await resolveSaveDir()
+      if (dir === null) {
+        // 降级:浏览器下载(Downloads)。功能可用但不在工程文件夹内。
+        const text = buildSaveDoc(payload)
+        const name = String(payload.title ?? 'gal-save') + '.md'
+        if (downloadTextFile(name, text)) {
+          return { id: name, title: payload.title, fallback: true }
+        }
+        throw new Error('未选择存档文件夹(点击「选择存档文件夹」授权一次)')
+      }
+      if (payload.atSeq === null || payload.atSeq === undefined) throw new Error('还没有已完成的对话,先聊两句再存档吧')
+      const existing = await listSaveFiles(dir)
+      const ids = existing.map(slotIdFromFileName).filter(id => id !== '')
+      const prefix = fileSlotPrefix(payload.rootTitle)
+      const id = nextFileSlotId(prefix, ids, payload.auto === true)
+      const title = typeof payload.title === 'string' && payload.title !== '' ? payload.title : id
+      const name = id + '.md'
+      const text = buildSaveDoc({ ...payload, title })
+      await writeSaveFile(dir, name, text)
+      console.info('[gal-view:save] 存档文件写入:', name, '(atSeq=' + payload.atSeq + ')')
+      if (payload.auto === true) {
+        // 自动档仅保留最新一个:删除目录里旧的自动档文件。
+        for (const oldName of existing) {
+          const slot = slotFromFileName(oldName, prefix)
+          if (slot !== null && slot.auto && slot.id !== id) {
+            await removeSaveFile(dir, oldName)
+            console.info('[gal-view:save] 清理旧自动档文件:', oldName)
+          }
+        }
+      }
+      this.noteSaveOp()
+      return { id, name, title, fallback: false }
+    },
+    /** 读文件存档:解析 → fork(当前主线, atSeq=存档点) → 打开新线。
+     * 测试期不归档旧线(ARCHIVE_OLD_ON_LOAD=false)。
+     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入。 */
+    async loadSaveFile(id) {
+      const dir = await resolveSaveDir()
+      if (dir === null) throw new Error('未选择存档文件夹')
+      const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
+      const text = await readSaveFile(dir, name)
+      if (text === null) throw new Error('存档文件已丢失(可能被移动或删除)')
+      const doc = parseSaveDoc(text)
+      if (doc === null) throw new Error('存档文件无法解析(格式损坏或不是本插件生成的存档)')
+      const mainId = this.currentSessionId()
+      if (mainId === null) throw new Error('未找到当前会话')
+      const mainTitle = this.mainTitle()
+      console.info('[gal-view:save] load-file: 解析成功', doc.meta.title, 'atSeq=' + String(doc.meta.atSeq), 'sessionId=' + doc.meta.sessionId)
+      // 世界线校验:存档会话必须在当前主线的祖先链上(或就是主线),fork-atSeq
+      // 才能精确切回存档点;否则官方会静默切到"最后一个完成回合",内容漂移。
+      const snapForChain = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const byId = snapForChain !== null && typeof snapForChain === 'object' ? snapForChain.byId ?? {} : {}
+      const anchored = doc.meta.sessionId === mainId || isAncestorOf(byId, doc.meta.sessionId, mainId)
+      try {
+        // 世界线校验:存档会话必须在当前主线的祖先链上(或就是主线),fork-atSeq
+        // 才能精确切回存档点;否则官方会静默切到"最后一个完成回合",内容漂移,
+        // 直接走内容级还原降级。
+        if (!anchored) {
+          console.warn('[gal-view:save] load-file: 存档会话不在当前主线祖先链上,跳过 fork-atSeq,降级为内容级还原:', doc.meta.sessionId, '→', mainId)
+          throw new Error('worldline-detached')
+        }
+        if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+        if (doc.meta.atSeq === null) throw new Error('该存档没有存档点,无法按分叉还原')
+        const childId = await sessionsSvc.fork({ sessionId: mainId, atSeq: doc.meta.atSeq })
+        console.info('[gal-view:save] load-file: fork-atSeq 完成', childId)
+        await sessionsSvc.open(childId)
+        await this.waitCurrentIs(childId, 2000)
+        if (mainTitle !== '' && mainTitle !== doc.meta.title) {
+          try {
+            const binding = sessionsSvc.binding?.(childId)
+            const session = binding?.session ?? null
+            if (session !== null && typeof session.rename === 'function') await session.rename(mainTitle)
+          } catch {
+            // 忽略:保留继承名
+          }
+        }
+        if (ARCHIVE_OLD_ON_LOAD) {
+          if (this.currentSessionId() === mainId) {
+            console.warn('[gal-view:save] load-file: 当前会话仍未切换,放弃归档旧线:', mainId)
+          } else {
+            await this.archiveSessionQuiet(mainId)
+          }
+        } else {
+          console.info('[gal-view:save] load-file: 测试期不归档旧线(旧线保留在工作区):', mainId)
+        }
+        this.noteSaveOp()
+        return { childId, mode: 'fork', lines: doc.lines, title: doc.meta.title }
+      } catch (cause) {
+        console.warn('[gal-view:save] load-file: fork 还原失败,降级为内容级还原:', cause)
+        if (!this.hasSessionsService() || typeof sessionsSvc.create !== 'function') throw cause
+        const created = await sessionsSvc.create({})
+        const createdId = typeof created === 'string' ? created : created?.sessionId ?? created?.value?.sessionId
+        if (typeof createdId !== 'string' || createdId === '') throw cause
+        await sessionsSvc.open(createdId)
+        const recordText = linesToText(doc.lines, doc.meta.assistantName)
+        this.noteSaveOp()
+        return { childId: createdId, mode: 'inject', lines: doc.lines, title: doc.meta.title, recordText }
+      }
+    },
+    /** 删除文件存档(直接删文件;不存在返回 false)。 */
+    async deleteSlotFile(id) {
+      const dir = await resolveSaveDir()
+      if (dir === null) throw new Error('未选择存档文件夹')
+      const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
+      const removed = await removeSaveFile(dir, name)
+      console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
+      return removed
+    },
+    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。 */
+    async pageFullHistory() {
+      const id = this.currentSessionId()
+      if (id === null) return
+      const session = sessionsSvc?.binding?.(id)?.session ?? null
+      if (session === null || typeof session.loadOlder !== 'function') return
+      let guard = 0
+      while (session.hasMore === true && session.loadingOlder !== true && guard < 60) {
+        guard += 1
+        try {
+          await session.loadOlder()
+        } catch (cause) {
+          console.warn('[gal-view:save] 历史回拉中断:', cause)
+          break
+        }
+      }
+      if (guard >= 60) console.warn('[gal-view:save] 历史回拉达到上限,记录可能不完整(前 3000 条内)')
+    },
   }
 }
 
 /** 槽位注册表键（localStorage）。 */
 const SLOTS_KEY = 'gal-view:slots'
+
+/**
+ * 读档后是否归档旧世界线。测试期关闭(用户要求):确认 load/save 完全正确后再改 true。
+ * 关闭时旧线保留在工作区列表,可随时切回对比,不影响新世界线继续。
+ */
+const ARCHIVE_OLD_ON_LOAD = false
 
 /** 标题是否像槽位名（xx-saveN / xx-自动N）——主线程标题不应取槽位名。 */
 function isSlotTitle(title) {

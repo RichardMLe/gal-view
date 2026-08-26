@@ -1,4 +1,5 @@
-// 仿真验证：加载 gal-view bundle → apply() → 模拟 slots 注册拿到 api → 端到端测分叉存档路径。
+// 仿真验证：加载 gal-view bundle → apply() → 模拟 slots 注册拿到 api →
+// 端到端测旧式分叉存档 + 新文件式存档(fork-atSeq 读档/不归档/删除/降级注入)。
 import { readFileSync } from 'node:fs'
 
 const code = readFileSync('.dsh-plugin/client.js', 'utf8')
@@ -12,7 +13,49 @@ const localStorageMock = {
 const styleElMock = () => ({ tagName: 'STYLE', setAttribute() {}, textContent: '', remove() {} })
 globalThis.window = { localStorage: localStorageMock, __ModuleLoader__: null }
 globalThis.document = { querySelector: () => null, querySelectorAll: () => [], createElement: () => styleElMock(), head: { append() {} }, body: {} }
-globalThis.indexedDB = undefined
+// —— 假 IndexedDB:只存目录句柄(loadDirHandle/storeDirHandle 用)——
+const handleStore = new Map()
+globalThis.indexedDB = {
+  open: () => {
+    const req = {}
+    setTimeout(() => {
+      req.result = {
+        objectStoreNames: { contains: () => true },
+        createObjectStore() {},
+        transaction: () => ({
+          objectStore: () => ({
+            get: key => { const r = {}; setTimeout(() => { r.result = handleStore.get(key) ?? null; if (typeof r.onsuccess === 'function') r.onsuccess() }, 0); return r },
+            put: (value, key) => { handleStore.set(key, value) },
+          }),
+        }),
+        close() {},
+      }
+      if (typeof req.onupgradeneeded === 'function') req.onupgradeneeded()
+      if (typeof req.onsuccess === 'function') req.onsuccess()
+    }, 0)
+    return req
+  },
+}
+// —— 假文件系统(FS Access API 目录)——
+const fakeFiles = new Map()
+const fakeDir = {
+  kind: 'directory',
+  entries: () => (function* () { for (const [name, handle] of fakeFiles) yield [name, handle] })(),
+  getDirectoryHandle: () => Promise.resolve(fakeDir),
+  getFileHandle: name => Promise.resolve({
+    kind: 'file',
+    createWritable: () => Promise.resolve({
+      write: text => { fakeFiles.set(name, { kind: 'file', content: String(text) }) },
+      close: () => Promise.resolve(),
+    }),
+    getFile: () => Promise.resolve({ text: () => Promise.resolve(fakeFiles.get(name)?.content ?? null) }),
+  }),
+  removeEntry: name => { fakeFiles.delete(name); return Promise.resolve() },
+  queryPermission: () => Promise.resolve('granted'),
+  requestPermission: () => Promise.resolve('granted'),
+}
+globalThis.window.isSecureContext = true
+globalThis.window.showDirectoryPicker = async () => { handleStore.set('dir', fakeDir); return fakeDir }
 globalThis.MutationObserver = class { observe() {} disconnect() {} }
 
 const reactStub = new Proxy(function () {}, {
@@ -30,22 +73,36 @@ new Function('window', 'document', code)(window, document)
 
 // —— sessions mock（形状对齐 dsh-client-runtime；无 archiveSession——它在 workspaces 上）——
 let renameCalls = []
+let forkCalls = []
 let forkSeq = 0
+let createSeq = 0
+let forkReject = false
 let listCurrent = 's-root'
 let openSwitches = true
+const listById = {
+  's-root': { sessionId: 's-root', title: '深海脑探案', parentSessionId: undefined, updatedAt: 1700000000000, running: false, completed: true },
+  's-save1': { sessionId: 's-save1', title: '深海脑-save1', parentSessionId: 's-root', updatedAt: 1700000100000, running: false, completed: true },
+  's-auto1': { sessionId: 's-auto1', title: '深海脑-自动1', parentSessionId: 's-root', updatedAt: 1700000300000, running: false, completed: true },
+}
 const sessionsMock = {
   list: {
-    getSnapshot: () => ({
-      current: listCurrent,
-      byId: {
-        's-root': { sessionId: 's-root', title: '深海脑探案', parentSessionId: undefined, updatedAt: 1700000000000, running: false, completed: true },
-        's-save1': { sessionId: 's-save1', title: '深海脑-save1', parentSessionId: 's-root', updatedAt: 1700000100000, running: false, completed: true },
-        's-auto1': { sessionId: 's-auto1', title: '深海脑-自动1', parentSessionId: 's-root', updatedAt: 1700000300000, running: false, completed: true },
-      },
-    }),
+    getSnapshot: () => ({ current: listCurrent, byId: listById }),
     subscribe: () => () => {},
   },
-  fork: () => { forkSeq += 1; return Promise.resolve('s-new-' + forkSeq) },
+  fork: (opts) => {
+    forkCalls.push({ ...opts })
+    forkSeq += 1
+    const id = 's-new-' + forkSeq
+    listById[id] = { sessionId: id, title: id, parentSessionId: opts.sessionId, updatedAt: Date.now(), running: false, completed: true }
+    if (forkReject) return Promise.reject(new Error('fork-unavailable: no completed turn'))
+    return Promise.resolve(id)
+  },
+  create: () => {
+    createSeq += 1
+    const id = 's-created-' + createSeq
+    listById[id] = { sessionId: id, title: id, updatedAt: Date.now(), running: false, completed: true, blank: true }
+    return Promise.resolve(id)
+  },
   // 真实运行时 open(select) 同步切换 list.current;openSwitches=false 模拟切换未落地的竞态。
   open: id => { openCalls.push(id); if (openSwitches) listCurrent = id; return Promise.resolve() },
   binding: id => ({
@@ -117,16 +174,78 @@ try {
   if (openCalls[0] !== 's-new-3') { console.error('FAIL loadSave fork child not opened: ' + openCalls[0]); process.exit(1) }
   // 新世界线改回主线程原名
   if (renameCalls[2]?.[0] !== 's-new-3' || renameCalls[2]?.[1] !== '深海脑探案') { console.error('FAIL loadSave rename to main title'); process.exit(1) }
-  // 旧世界线归档（切换已确认后）
-  if (!archiveCalls.includes('s-root')) { console.error('FAIL loadSave old line not archived'); process.exit(1) }
+  // 测试期开关:读档后不归档旧线(用户要求)
+  if (archiveCalls.includes('s-root')) { console.error('FAIL loadSave archived old line while testing flag is off'); process.exit(1) }
 
-  // —— 竞态护栏：open 未切换落地的读档必须放弃归档旧线（官方会因归档当前会话清空对话）——
+  // —— 竞态护栏(开关打开时的行为,直接校验归档守卫逻辑不因开关关闭而回归)——
   openSwitches = false
   const archivedBefore = archiveCalls.length
   await registeredApi.loadSave(index.saves[0].id)
   console.log('loadSave(no-switch) openCalls:', JSON.stringify(openCalls), 'archiveCalls:', JSON.stringify(archiveCalls))
   if (archiveCalls.length !== archivedBefore) { console.error('FAIL guard: archived while current did not switch'); process.exit(1) }
   openSwitches = true
+
+  // —— 文件式存档 e2e ——
+  console.log('--- 文件式存档 ---')
+  const dirOk = await registeredApi.ensureSaveDir()
+  if (dirOk !== true) { console.error('FAIL ensureSaveDir'); process.exit(1) }
+  listCurrent = 's-root'
+  const saved = await registeredApi.saveSlotFile({
+    auto: false, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42,
+    assistantName: '雾子', turns: 7,
+    lines: [{ kind: 'player', text: '你好' }, { kind: 'assistant', text: '你好呀\n第二行' }],
+  })
+  if (saved.id !== '深海脑-save1' || saved.title !== '深海脑-save1') { console.error('FAIL saveSlotFile id/title: ' + JSON.stringify(saved)); process.exit(1) }
+  if (!fakeFiles.has('深海脑-save1.md')) { console.error('FAIL saveSlotFile file not written'); process.exit(1) }
+  console.log('saveSlotFile ok:', saved.id)
+
+  const fileList = await registeredApi.listFileSlots()
+  console.log('listFileSlots:', JSON.stringify(fileList))
+  if (fileList.ready !== true || fileList.saves.length !== 1 || fileList.saves[0].title !== '深海脑-save1' || fileList.saves[0].turns !== 7) { console.error('FAIL listFileSlots'); process.exit(1) }
+
+  // 自动档:两次存档,第二次清理第一次(仅保留最新)
+  const auto1 = await registeredApi.saveSlotFile({ auto: true, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: 'a' }] })
+  const auto2 = await registeredApi.saveSlotFile({ auto: true, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: 'b' }] })
+  if (auto1.id !== '深海脑-自动1' || auto2.id !== '深海脑-自动2') { console.error('FAIL auto naming: ' + auto1.id + '/' + auto2.id); process.exit(1) }
+  if (fakeFiles.has('深海脑-自动1.md')) { console.error('FAIL old auto file not cleaned'); process.exit(1) }
+  const autoList = await registeredApi.listFileSlots()
+  if (autoList.autos.length !== 1 || autoList.autos[0].id !== '深海脑-自动2') { console.error('FAIL auto list: ' + JSON.stringify(autoList.autos)); process.exit(1) }
+  console.log('auto file ok:', autoList.autos.map(s => s.id).join(','))
+
+  const beforeLoadArchive = archiveCalls.length
+  const forkCallsBefore = forkCalls.length
+  const loaded = await registeredApi.loadSaveFile('深海脑-save1')
+  console.log('loadSaveFile forkCalls:', JSON.stringify(forkCalls.slice(forkCallsBefore)), 'mode:', loaded.mode)
+  if (forkCalls[forkCallsBefore]?.atSeq !== 42 || forkCalls[forkCallsBefore]?.sessionId !== 's-root') { console.error('FAIL loadSaveFile fork payload: ' + JSON.stringify(forkCalls[forkCallsBefore])); process.exit(1) }
+  if (loaded.mode !== 'fork' || loaded.childId !== 's-new-' + (forkSeq)) { console.error('FAIL loadSaveFile fork result: ' + JSON.stringify(loaded)); process.exit(1) }
+  // 测试期:旧线不归档
+  if (archiveCalls.length !== beforeLoadArchive) { console.error('FAIL loadSaveFile archived while testing'); process.exit(1) }
+
+  // —— 降级注入:fork 失败 → create+open+记录文本 ——
+  forkReject = true
+  const injected = await registeredApi.loadSaveFile('深海脑-save1')
+  forkReject = false
+  console.log('loadSaveFile(inject) mode:', injected.mode, 'childId:', injected.childId)
+  if (injected.mode !== 'inject' || injected.childId !== 's-created-1') { console.error('FAIL inject fallback: ' + JSON.stringify(injected)); process.exit(1) }
+  if (typeof injected.recordText !== 'string' || !injected.recordText.includes('你好呀')) { console.error('FAIL inject recordText'); process.exit(1) }
+  if (!openCalls.includes('s-created-1')) { console.error('FAIL inject open'); process.exit(1) }
+
+  // —— 删除文件存档 ——
+  const removed = await registeredApi.deleteSlotFile('深海脑-save1')
+  if (removed !== true || fakeFiles.has('深海脑-save1.md')) { console.error('FAIL deleteSlotFile'); process.exit(1) }
+  const afterDelete = await registeredApi.listFileSlots()
+  if (afterDelete.saves.length !== 0) { console.error('FAIL list after delete'); process.exit(1) }
+  console.log('deleteSlotFile ok')
+
+  // —— 世界线脱钩:存档会话不在当前主线祖先链上 → 绝不 fork,降级注入 ——
+  const detached = await registeredApi.saveSlotFile({ auto: false, rootTitle: '深海脑探案', sessionId: 's-other', atSeq: 99, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: '另一条线' }] })
+  const forkBeforeDetached = forkCalls.length
+  const detachedLoaded = await registeredApi.loadSaveFile(detached.id)
+  console.log('loadSaveFile(detached) mode:', detachedLoaded.mode)
+  if (detachedLoaded.mode !== 'inject') { console.error('FAIL worldline-detached should inject: ' + JSON.stringify(detachedLoaded)); process.exit(1) }
+  if (forkCalls.length !== forkBeforeDetached) { console.error('FAIL worldline-detached must not fork'); process.exit(1) }
+  await registeredApi.deleteSlotFile(detached.id)
+  console.log('worldline-detached ok')
 
   if (registeredApi.hasSessionsService() !== true) { console.error('FAIL hasSessionsService'); process.exit(1) }
   console.log('ALL OK')
