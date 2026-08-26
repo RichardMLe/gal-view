@@ -2,6 +2,8 @@
  * 视觉基调：深色夜晚 + 半透明毛玻璃 + 紫蓝/靛青/暗红点缀 + 细边框 + 克制的发光。
  */
 
+import { GV_BOW_ART, GV_SETTINGS_FRAME_ART, GV_SIDEBAR_CORNER_ART } from './skinart.mjs'
+
 export const CSS = `
 [data-gal-view] {
   --gv-bg: #0a0d1c;
@@ -17,6 +19,7 @@ export const CSS = `
   --gv-glow: 0 0 0 1px rgba(143, 123, 255, .30), 0 0 16px rgba(143, 123, 255, .16);
   box-sizing: border-box;
   position: relative;
+  z-index: 0; /* 自身成层叠上下文：-1 层模糊延展背景可垫底，内容按文档序上浮 */
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -34,14 +37,41 @@ export const CSS = `
 [data-gal-view] input, [data-gal-view] textarea, [data-gal-view] select { user-select: text; }
 
 /* ---------- 填满会话区 ---------- */
-/* 挂载时组件隐藏会话外壳的输入席并给根节点打上该标记：绝对定位占满整个会话主体。 */
+/* 挂载时组件隐藏会话外壳的输入席并给根节点打上该标记：绝对定位占满整个会话主体。
+ * 右侧补偿：外壳预留滚动条槽（scrollbar-gutter: stable）会让视窗右缘露出一道缝隙，
+ * 用官方同一变量把右缘扩展到槽里（变量未定义时 0，无副作用）。 */
 [data-gal-view][data-gal-fills] {
   position: absolute;
   inset: 0;
+  right: calc(0px - var(--dsh-scrollbar-width, 0px));
   height: auto;
   min-height: 0;
   z-index: 5;
 }
+
+/* 外壳隐藏规则改用 CSS（:has + !important）而非组件内联样式：
+ * 官方容器因批准/问答接管而重挂载时，内联样式会丢失 → 输入席闪现再隐藏 → 整窗闪烁。
+ * CSS 规则挂在 [data-gal-fills] 标记上，标记由组件卸载时移除，随取随弃。 */
+[data-conversation-scroll]:has([data-gal-view][data-gal-fills]) {
+  overflow: hidden !important;
+  position: relative !important;
+}
+[data-conversation-scroll]:has([data-gal-view][data-gal-fills]) > [data-composer-seat] {
+  display: none !important;
+}
+/* 官方批准/提问卡片（含红感叹号等图标）禁止在 GAL 视窗的会话区内闪现：
+ * 决策全部由 gal-view 自己的面板承载，官方卡片一出现即隐藏。 */
+[data-conversation-scroll]:has([data-gal-view][data-gal-fills]) :is([data-approval-key], [data-plan-review-key], [data-question-key]) {
+  display: none !important;
+}
+/* 官方队列停靠栏（data-queue-dock）：批准落定时重渲染、错误态图标（红感叹号）
+ * 瞬时闪现——GAL 视窗激活期间整体隐藏（队列操作在官方「对话」栏进行）。 */
+[data-conversation-scroll]:has([data-gal-view][data-gal-fills]) [data-queue-dock] {
+  display: none !important;
+}
+
+/* 背景铺满：游戏模式舞台 cover 适配（铺满整个视窗，边缘裁剪），
+ * 编辑模式舞台 contain 适配（WYSIWYG）。不再使用模糊延展层。 */
 
 /* ---------- 顶部栏 ---------- */
 .gv-topbar {
@@ -94,6 +124,18 @@ export const CSS = `
   background: linear-gradient(180deg, rgba(143, 123, 255, .20), rgba(79, 140, 255, .12));
 }
 .gv-btn-accent:hover:not(:disabled) { background: linear-gradient(180deg, rgba(143, 123, 255, .30), rgba(79, 140, 255, .18)); }
+/* 金色主按钮：决策面板「允许一次/提交」——金边 + 鲸鱼蓝内里。 */
+.gv-btn-gold {
+  border-color: rgba(197, 164, 104, .7);
+  background: linear-gradient(180deg, rgba(32, 49, 112, .92), rgba(24, 38, 88, .92));
+  color: #eef1fb;
+}
+.gv-btn-gold:hover:not(:disabled) {
+  border-color: #e2cfaa;
+  background: linear-gradient(180deg, rgba(44, 64, 138, .95), rgba(30, 46, 104, .95));
+  box-shadow: 0 0 12px rgba(197, 164, 104, .32);
+  color: #fff;
+}
 .gv-toggle.is-on {
   border-color: rgba(143, 123, 255, .7);
   background: rgba(143, 123, 255, .14);
@@ -107,13 +149,18 @@ export const CSS = `
   flex: 1 1 auto; min-width: 0; min-height: 0;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; position: relative;
-  background: radial-gradient(900px 460px at 50% 30%, rgba(30, 36, 70, .5), transparent 70%), #070912;
+  /* 不再使用实色底：模糊延展背景经根节点垫底后从这里透出；仅留轻暗角聚焦舞台。 */
+  background: radial-gradient(900px 460px at 50% 30%, rgba(8, 10, 24, .34), transparent 70%);
 }
 .gv-stage {
   position: relative;
   flex: none;
   /* 居中缩放：wrap 按未缩放的布局盒居中，原点取中心才能让缩放后的舞台视觉居中（0 0 会在小窗口把舞台挤到左上并被裁掉）。 */
   transform-origin: 50% 50%;
+  /* 常驻合成层：缩放落定后按目标尺寸栅格化，避免缩放瞬时/缩放后残留模糊。
+     transform 过渡：外部布局突变（批准框等）引发缩放跳变时平滑过渡，不再闪一下。 */
+  will-change: transform;
+  transition: transform .16s ease-out;
   background: #0c1026;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 22px 60px rgba(0, 0, 0, .55);
 }
@@ -136,7 +183,7 @@ export const CSS = `
 .gv-el { position: absolute; border-style: solid; pointer-events: none; overflow: visible; }
 .gv-stage.is-editor .gv-el.is-pickable { pointer-events: auto; cursor: move; }
 /* 透明功能按钮：游戏模式可点击（元素级交互，无悬停高亮）。 */
-[data-gal-mode='game'] .gv-el-action-button { pointer-events: auto; cursor: pointer; }
+[data-gal-mode='game'] :is(.gv-el-action-button, .gv-el-button) { pointer-events: auto; cursor: pointer; }
 .gv-el-action-button.is-on { border-color: var(--gv-accent); background: rgba(143, 123, 255, .14); color: #fff; }
 .gv-stage.is-editor .gv-el.is-pickable:hover { outline: 1px solid rgba(143, 123, 255, .55); outline-offset: 1px; }
 .gv-el.is-locked { cursor: not-allowed; }
@@ -261,6 +308,49 @@ export const CSS = `
  * 编辑模式用「工具栏 40px + 占位条 44px」对齐这里的 84px，
  * 保证两种模式的舞台槽位尺寸严格一致 → WYSIWYG。 */
 .gv-input { flex: none; height: 84px; display: flex; gap: 10px; align-items: stretch; padding: 8px 16px 10px; }
+/* 提问期间隐藏输入行（不卸载）：布局零变化，决策面板出现/消失不再引发舞台缩放/闪烁。 */
+.gv-input.is-hidden { visibility: hidden; pointer-events: none; }
+
+/* ---------- 上下文占用指示条 ----------
+ * 覆盖层：absolute 下移 12px，贴于背景下缘与输入框之间；
+ * 不占布局（舞台区大小不变）；整条 pointer-events:none —— 不挡输入框点击。 */
+.gv-stage-area { position: relative; }
+.gv-context {
+  position: absolute; left: 0; right: 0; bottom: -12px;
+  display: flex; align-items: center; gap: 10px;
+  height: 12px; padding: 0 16px;
+  pointer-events: none;
+}
+.gv-context-track {
+  position: relative; flex: 1 1 auto; min-width: 0;
+  height: 4px; border-radius: 2px;
+  background: rgba(255, 255, 255, .14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+}
+.gv-context-fill {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(79, 140, 255, .75), rgba(143, 123, 255, .85));
+  box-shadow: 0 0 8px rgba(143, 123, 255, .35);
+  transition: width .3s ease;
+}
+.gv-context-fill.is-high {
+  background: linear-gradient(90deg, rgba(190, 145, 75, .8), rgba(224, 90, 107, .85));
+  box-shadow: 0 0 8px rgba(224, 90, 107, .4);
+}
+.gv-context-whale {
+  position: absolute; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 15px; line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(2, 8, 28, .6));
+  transition: left .3s ease;
+  pointer-events: none;
+}
+.gv-context-num {
+  flex: none; min-width: 36px; text-align: right;
+  font-size: 11px; color: var(--gv-text-dim); font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+}
 .gv-input-box {
   flex: 1 1 auto; resize: none;
   background: rgba(10, 13, 28, .72);
@@ -326,6 +416,341 @@ export const CSS = `
 }
 .gv-settings-row input:focus, .gv-settings-row select:focus { border-color: rgba(143, 123, 255, .6); }
 .gv-settings-hint { margin: 8px 0 0; font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
+/* 选项框设置预览：渲染在编辑画布中央（= 游戏模式决策面板实际出现位置）的覆盖层；
+ * 复用真实决策面板样式（字号由 CSS 变量驱动），pointer-events:none 不干扰编辑手势。 */
+.gv-options-preview-stage {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 24px;
+  pointer-events: none;
+}
+.gv-options-preview-stage .gv-pending-head { width: min(420px, 90%); }
+.gv-options-preview-stage .gv-pending-options { width: min(420px, 82%); margin-top: 0; }
+/* 人设展示范例：常驻编辑画布右下角（活动行实际出现区域）的两行台词演示。 */
+.gv-persona-preview {
+  position: absolute; right: 18px; bottom: 14px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  max-width: 46%;
+  padding: 8px 12px;
+  background: rgba(10, 13, 28, .72);
+  border: 1px solid var(--gv-line-strong);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.gv-persona-preview-line {
+  font-size: 13px; line-height: 1.6; color: var(--gv-text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.gv-persona-preview-line.gv-activity-tool { color: var(--gv-text-dim); }
+
+/* ---------- 存档/读档面板（分叉会话式） ----------
+ * SAve = 创建会话分叉（xx-saveN），LOAD = 切换到分叉会话；
+ * 居中浮层，行为与设置/历史面板一致（Escape 关闭）。 */
+.gv-saves-layer {
+  position: absolute; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 8, 18, .28);
+}
+.gv-saves {
+  width: min(440px, 94%);
+  max-height: 82%;
+  display: flex; flex-direction: column;
+  background: var(--gv-panel-2);
+  border: 1px solid var(--gv-line-strong);
+  border-radius: 6px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .5), var(--gv-glow);
+  padding: 12px 14px;
+  animation: gv-rise .18s cubic-bezier(.16, 1, .3, 1);
+}
+.gv-saves-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 8px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--gv-line-strong);
+  font-size: 13px; font-weight: 600; letter-spacing: .2em;
+}
+.gv-saves-hint { margin: 2px 0 0; font-size: 11px; line-height: 1.7; color: var(--gv-text-dim); }
+.gv-saves-meta { margin: 4px 0 0; font-size: 11px; color: var(--gv-text-dim); letter-spacing: .04em; }
+.gv-saves-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin-top: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  scrollbar-width: thin;
+}
+.gv-saves-empty { padding: 16px 0; text-align: center; color: var(--gv-text-dim); font-size: 12px; }
+/* 自动存档常驻槽位：无自动存档时的占位提示框。 */
+.gv-saves-auto-empty {
+  padding: 10px 0;
+  border: 1px dashed var(--gv-line-strong);
+  border-radius: 4px;
+  background: rgba(16, 20, 38, .4);
+}
+.gv-saves-actions {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 10px;
+}
+.gv-saves-group {
+  margin: 4px 0 -2px;
+  font-size: 10px; letter-spacing: .18em;
+  color: var(--gv-text-dim);
+}
+.gv-saves-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  background: rgba(16, 20, 38, .82);
+  border: 1px solid var(--gv-line);
+  border-radius: 4px;
+}
+.gv-saves-row.is-current { border-color: rgba(143, 123, 255, .55); background: rgba(143, 123, 255, .08); }
+.gv-saves-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--gv-text); }
+/* 手动存档名称可点击改名。 */
+.gv-saves-name.is-renamable { cursor: text; }
+.gv-saves-name.is-renamable:hover { color: #d3b477; }
+.gv-saves-edit {
+  flex: 1 1 auto; min-width: 0;
+  background: rgba(10, 13, 28, .85);
+  border: 1px solid rgba(197, 164, 104, .6);
+  border-radius: 3px;
+  color: var(--gv-text);
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+}
+.gv-saves-time { flex: none; font-size: 11px; color: var(--gv-text-dim); font-variant-numeric: tabular-nums; }
+.gv-saves-badge {
+  flex: none; font-size: 10px; letter-spacing: .1em;
+  color: #d3b477; border: 1px solid rgba(197, 164, 104, .45); border-radius: 3px; padding: 0 5px;
+}
+.gv-saves-create { margin-top: 10px; align-self: stretch; }
+.gv-saves-error { margin: 8px 0 0; font-size: 12px; color: var(--gv-accent-red); }
+.gv-saves-notice { margin: 8px 0 0; font-size: 12px; color: #8fd3a2; }
+
+/* ---------- 决策面板（等待批准/提问） ----------
+ * Galgame 原味版式：无外层包裹框；金色标题 + 蝴蝶结金线分隔 + 垂直并列大选项框；
+ * 「算了/先跳过/下一题」与选项并列；提交整合进玩家输入框；背景虚化轻。
+ * pending 非空时显示，回答后随 pending 移除自动消失（与官方卡片同一 respond 通道）。 */
+.gv-pending-layer {
+  position: absolute; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+}
+.gv-pending-veil {
+  position: absolute; inset: 0;
+  background: rgba(5, 8, 18, .32);
+}
+.gv-pending-stack {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  width: min(760px, 96%);
+  max-height: 92%;
+  overflow-y: auto; scrollbar-width: thin;
+  padding: 8px;
+  animation: gv-rise .22s cubic-bezier(.16, 1, .3, 1);
+}
+.gv-pending-approval, .gv-pending-question {
+  width: 100%;
+  display: flex; flex-direction: column; align-items: center;
+}
+/* 问题框：皮肤侧边栏同款——四边金色渐变细线 + 四角花纹（纯 CSS 线 + 角落资产）+ 深色打底。 */
+.gv-pending-head {
+  position: relative;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  max-width: min(760px, 100%);
+  border: 0;
+  background-color: rgba(10, 13, 28, .78);
+  background-image:
+    linear-gradient(90deg, rgba(238, 210, 153, .94), rgba(190, 145, 75, .96), rgba(238, 210, 153, .94)),
+    linear-gradient(90deg, rgba(238, 210, 153, .94), rgba(190, 145, 75, .96), rgba(238, 210, 153, .94)),
+    linear-gradient(180deg, rgba(238, 210, 153, .94), rgba(190, 145, 75, .96), rgba(238, 210, 153, .94)),
+    linear-gradient(180deg, rgba(238, 210, 153, .94), rgba(190, 145, 75, .96), rgba(238, 210, 153, .94));
+  background-repeat: no-repeat;
+  background-size:
+    calc(100% - 82px) 1.25px,
+    calc(100% - 82px) 1.25px,
+    1.35px calc(100% - 40px),
+    1.35px calc(100% - 40px);
+  background-position:
+    left 41px top 6px,
+    left 41px bottom 6px,
+    left 6px top 20px,
+    right 6px top 20px;
+  padding: 16px 44px;
+  filter: drop-shadow(0 4px 12px rgba(2, 8, 28, .35));
+}
+/* 四角花纹（皮肤转角资产，四向翻转复用）。 */
+.gv-pending-corner {
+  position: absolute; width: 40px; height: 40px;
+  background: url("${GV_SIDEBAR_CORNER_ART}") top right / 84px 84px no-repeat;
+  filter: drop-shadow(0 1px 1px rgba(2, 7, 24, .42));
+  pointer-events: none;
+}
+.gv-pending-corner-tl { top: 1px; left: 1px; transform: scaleX(-1); }
+.gv-pending-corner-tr { top: 1px; right: 1px; }
+.gv-pending-corner-br { right: 1px; bottom: 1px; transform: scaleY(-1); }
+.gv-pending-corner-bl { left: 1px; bottom: 1px; transform: scale(-1); }
+.gv-pending-head-row {
+  display: flex; align-items: baseline; justify-content: center; gap: 12px;
+  max-width: 100%;
+}
+.gv-pending-eyebrow {
+  font-size: 18px; font-weight: 700; letter-spacing: .06em;
+  color: #d3b477;
+  text-align: center;
+  text-shadow: 0 0 12px rgba(197, 164, 104, .35);
+}
+.gv-pending-title {
+  font-size: var(--gv-pending-title-size, 16px); font-weight: 400; letter-spacing: .03em;
+  color: #f2dfba;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.gv-pending-mode {
+  flex: none; font-size: 11px; letter-spacing: .1em;
+  color: rgba(211, 180, 119, .85);
+  border: 1px solid rgba(197, 164, 104, .45); border-radius: 3px; padding: 0 6px;
+}
+.gv-pending-detail {
+  margin: 0; max-width: 640px;
+  font-size: var(--gv-pending-detail-size, 15px); line-height: 1.7; color: var(--gv-text);
+  text-align: center;
+  white-space: pre-wrap; word-break: break-word;
+}
+.gv-pending-tag {
+  flex: none; font-size: 11px; color: #d3b477;
+  border: 1px solid rgba(197, 164, 104, .5); border-radius: 3px; padding: 0 6px;
+  max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gv-pending-pager { flex: none; font-size: 12px; color: var(--gv-text-dim); font-variant-numeric: tabular-nums; }
+.gv-pending-reason {
+  margin: 10px 0 0; max-width: 640px;
+  font-size: 14px; line-height: 1.7; color: var(--gv-text);
+  white-space: pre-wrap; word-break: break-word; text-align: center;
+}
+/* 金色横线 + 中间蝴蝶结（皮肤资产：透明蝴蝶结 + 皮肤金色渐变线）。 */
+.gv-pending-divider {
+  display: flex; align-items: center; width: min(760px, 100%);
+  margin: 10px 0 4px;
+}
+.gv-pending-divider::before, .gv-pending-divider::after {
+  content: ''; flex: 1; height: 1.25px;
+  background: linear-gradient(90deg, transparent, rgba(238, 210, 153, .94), rgba(190, 145, 75, .96), rgba(238, 210, 153, .94), transparent);
+}
+.gv-pending-bow {
+  flex: none; margin: 0 12px;
+  width: 110px; height: 50px;
+  background: url("${GV_BOW_ART}") center / contain no-repeat;
+  filter: drop-shadow(0 3px 7px rgba(4, 11, 35, .45));
+}
+/* 垂直并列的大选项框：占满面板宽度、字号对齐台词框、
+ * 边框使用皮肤「设置」按钮的金色边框（border-image 九宫格）。 */
+.gv-pending-options {
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; max-width: 760px;
+  margin-top: 10px;
+}
+.gv-pending-option {
+  position: relative;
+  display: block; width: 100%;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 0 34px;
+  border-image-source: url("${GV_SETTINGS_FRAME_ART}");
+  border-image-slice: 0 220 0 220 fill;
+  border-image-width: 0 34px;
+  border-image-repeat: stretch;
+  background: none;
+  color: #f2dfba;
+  font-family: inherit; font-size: var(--gv-pending-option-size, 15px); line-height: 1.6; letter-spacing: .05em;
+  text-align: center;
+  padding: 12px 8px; border-radius: 0; cursor: pointer;
+  filter: drop-shadow(0 4px 10px rgba(2, 8, 28, .3));
+  transition: filter .15s ease, color .15s ease, transform .05s ease;
+}
+.gv-pending-option:hover:not(:disabled) {
+  color: #fff;
+  filter: brightness(1.14) drop-shadow(0 0 12px rgba(238, 210, 153, .35));
+}
+.gv-pending-option:active:not(:disabled) { transform: scale(.985); }
+.gv-pending-option.is-selected {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(238, 210, 153, .85);
+  filter: brightness(1.38) drop-shadow(0 0 18px rgba(238, 210, 153, .65));
+}
+.gv-pending-option.is-gold { filter: brightness(1.12) drop-shadow(0 4px 10px rgba(2, 8, 28, .3)); }
+.gv-pending-option.is-gold:hover:not(:disabled) { filter: brightness(1.24) drop-shadow(0 0 14px rgba(238, 210, 153, .45)); }
+.gv-pending-option:disabled { cursor: default; }
+/* 选项与编辑框调亮一档（is-choice），与「确定/下一题/先跳过/算了」等动作按钮区分。 */
+.gv-pending-option.is-choice {
+  filter: brightness(1.14) drop-shadow(0 4px 10px rgba(2, 8, 28, .3));
+}
+.gv-pending-option.is-choice:hover:not(:disabled) {
+  filter: brightness(1.26) drop-shadow(0 0 14px rgba(238, 210, 153, .4));
+}
+.gv-pending-option.is-choice.is-selected {
+  filter: brightness(1.48) drop-shadow(0 0 20px rgba(238, 210, 153, .7));
+}
+/* 输入 + 提交整合的组合选项框：左边文本输入，右边提交按钮（同款金框，fill 方式与选项一致，
+ * 无半透明底——中间面由金框图片自身提供，编辑框自然嵌入）。 */
+.gv-pending-answer {
+  display: flex; align-items: stretch; gap: 8px;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 0 34px;
+  border-image-source: url("${GV_SETTINGS_FRAME_ART}");
+  border-image-slice: 0 220 0 220 fill;
+  border-image-width: 0 34px;
+  border-image-repeat: stretch;
+  background: none;
+  padding: 8px; cursor: default;
+  filter: brightness(1.1) drop-shadow(0 4px 10px rgba(2, 8, 28, .3));
+}
+.gv-pending-answer:active { transform: none; }
+.gv-pending-answer-input {
+  flex: 1 1 auto; min-width: 0;
+  background: rgba(10, 13, 28, .6);
+  border: 1px solid rgba(255, 255, 255, .18); border-radius: 4px;
+  color: var(--gv-text); font-family: inherit; font-size: var(--gv-pending-option-size, 15px); line-height: 1.6;
+  padding: 9px 12px; outline: none; resize: none;
+}
+.gv-pending-answer-input:focus { border-color: rgba(197, 164, 104, .65); }
+.gv-pending-answer-input::placeholder { color: var(--gv-text-dim); }
+.gv-pending-answer-submit {
+  flex: none;
+  border: 1px solid rgba(197, 164, 104, .8); border-radius: 4px;
+  background: linear-gradient(180deg, rgba(32, 49, 112, .85), rgba(24, 38, 88, .88));
+  color: #eef1fb; font-family: inherit; font-size: 14px; letter-spacing: .08em;
+  padding: 0 22px; cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, color .15s ease;
+}
+.gv-pending-answer-submit:hover:not(:disabled) {
+  border-color: #e2cfaa;
+  box-shadow: 0 0 12px rgba(197, 164, 104, .35);
+  color: #fff;
+}
+.gv-pending-answer-submit:disabled { opacity: .5; cursor: default; }
+.gv-pending-error {
+  margin: 10px 0 0; font-size: 13px; color: var(--gv-accent-red);
+  line-height: 1.6; text-align: center;
+}
+
+/* ---------- 状态活动行 ----------
+ * 长链思考过程：思考摘要/工具调用/生成预览/等待决定逐行展示。
+ * 各 kind 着色区分；等待决定用暖色醒目。 */
+.gv-dtext-activity { display: block; }
+.gv-activity-item {
+  display: block;
+  font-size: .92em;
+  line-height: 1.6;
+  color: var(--gv-text-dim);
+  letter-spacing: .03em;
+  white-space: pre-wrap; word-break: break-word;
+}
+.gv-activity-reasoning { color: #98a1c2; }
+.gv-activity-tool, .gv-activity-tool-running { color: var(--gv-accent-2); }
+.gv-activity-tool-running { animation: gv-pulse 1.6s ease-in-out infinite; }
+.gv-activity-writing { color: var(--gv-text); }
+.gv-activity-waiting { color: #ffb86b; font-weight: 600; }
+.gv-activity-error { color: var(--gv-accent-red); }
+.gv-activity-status { color: var(--gv-text-dim); animation: gv-pulse 1.6s ease-in-out infinite; }
 
 /* ---------- 编辑模式 ----------
  * 舞台槽位与游戏模式同尺寸：工具栏 40px 对齐游戏控制条，底部占位条 84px 对齐输入区；
@@ -421,6 +846,13 @@ export const CSS = `
 .gv-glyph-rect { border: 1px solid var(--gv-text-dim); }
 .gv-glyph-circle { border: 1px solid var(--gv-accent-red); border-radius: 50%; }
 .gv-glyph-decoration { border: 1px dashed var(--gv-text-dim); transform: rotate(45deg) scale(.85); }
+/* 「台词人设」左侧条目：金调小菱形（与品牌标呼应）。 */
+.gv-glyph-persona {
+  background: linear-gradient(135deg, rgba(238, 210, 153, .9), rgba(190, 145, 75, .9));
+  transform: rotate(45deg) scale(.8);
+}
+/* 左侧设置条目：与元素行同构，独立成行。 */
+.gv-tree-settings { cursor: pointer; }
 
 /* 属性面板 */
 .gv-props { padding: 10px 12px 16px; }
@@ -504,6 +936,17 @@ export const CSS = `
 @keyframes gv-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 @keyframes gv-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes gv-rise { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+/* 自动播放转圈提示（auto 按钮旁）。 */
+@keyframes gv-spin { to { transform: rotate(360deg); } }
+.gv-auto-spin {
+  position: absolute; right: 8px; top: 50%;
+  width: 10px; height: 10px; margin-top: -5px;
+  border: 2px solid rgba(255, 255, 255, .28);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: gv-spin .9s linear infinite;
+  pointer-events: none;
+}
 
 /* ---------- 设置选项卡（渲染在设置面板内，GAL 根节点之外 → 无作用域） ---------- */
 .gvsv-tab {

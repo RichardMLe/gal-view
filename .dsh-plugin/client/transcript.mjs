@@ -5,6 +5,8 @@
 // 工具调用/结果不进台词（Galgame 对话框不展示工具噪音）；错误/命令/压缩等事件
 // 以系统行进入历史。说话人映射（名字/颜色）也在这里。
 
+import * as persona from './persona.mjs'
+
 /**
  * 剥离 Markdown 语法标记（只去标记、保留正文；不触碰正常标点与数学符号）：
  * 代码围栏、图片、链接、加粗、删除线、斜体、行内代码、标题、引用、分割线、列表序号。
@@ -123,6 +125,90 @@ export function deriveStatus({ running, partial, pending = [], lastLine = null, 
   if (hasText) return '思考中'
   // 工具调用与工具执行合并为一个状态（不再附注工具名）。
   return partialStatus(partial) ?? '编写代码中'
+}
+
+/**
+ * 活动行模型：{ kind, text }。
+ * kind：reasoning（思考语气词/摘要）/ tool（拟人化调用工具）/ tool-running（执行工具中）/
+ *       writing（生成回复预览）/ waiting（等待批准/回答）/ error（出错/发送失败）/ status（兜底）。
+ * 台词经 persona.mjs 拟人化：只显示任务描述，绝不回显代码/JSON。
+ */
+function lastPreviewLine(text, cap = 80) {
+  const lines = String(text).split('\n').map(line => line.trim()).filter(line => line !== '')
+  if (lines.length === 0) return ''
+  const last = lines[lines.length - 1]
+  return last.length > cap ? last.slice(0, cap) + '…' : last
+}
+
+function dedupeActivity(items) {
+  const seen = new Set()
+  return items.filter(item => {
+    const key = item.kind + ':' + item.text
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * 结构化活动推导：把长链思考的运行状态展开为多条拟人化状态行
+ * （思考语气词 / 任务描述式工具调用 / 生成预览 / 等待决定 / 错误）。
+ * 输入与 deriveStatus 同源；返回活动行数组（空数组 = 无需显示）。
+ * @param personaCfg - scene.settings.persona 归一化配置（未传 = 默认人设）。
+ */
+export function deriveActivity({ running, partial, pending = [], runningCalls = [], lastLine = null, promptError = null, personaCfg = null }) {
+  if (!running) {
+    const items = []
+    if (lastLine !== null && lastLine.error === true) items.push({ kind: 'error', text: '出错' })
+    if (promptError !== null && typeof promptError === 'object' && promptError.op === 'send') items.push({ kind: 'error', text: '发送失败' })
+    return items
+  }
+  const items = []
+  // 等待批准/回答优先置顶（种子取首个载体的 key，流式期间台词稳定）。
+  if (Array.isArray(pending)) {
+    const approvals = pending.filter(wait => wait !== null && typeof wait === 'object' && wait.kind === 'approval')
+    const questions = pending.filter(wait => wait !== null && typeof wait === 'object' && wait.kind === 'question')
+    const seed = approvals[0]?.key ?? questions[0]?.key ?? 'pending'
+    if (approvals.length > 0) items.push({ kind: 'waiting', text: persona.waitApprovalLine(seed, personaCfg) })
+    if (questions.length > 0) items.push({ kind: 'waiting', text: persona.waitQuestionLine(seed, personaCfg) })
+  }
+  // 流式块：思考语气词 / 拟人化工具调用 / 生成预览。
+  if (partial !== null && typeof partial === 'object' && Array.isArray(partial.blocks)) {
+    let salt = 0
+    for (const block of partial.blocks) {
+      if (block === null || typeof block !== 'object') continue
+      if (block.kind === 'reasoning' && typeof block.text === 'string' && block.text.trim() !== '') {
+        // 传全文：语气词种子取首行（流式稳定），摘要取末行（实时演变）；
+        // salt=块序号：相邻块语气词不重复，同一块跨渲染稳定。
+        const line = persona.thinkingLine(block.text, personaCfg, salt)
+        if (line !== '') items.push({ kind: 'reasoning', text: line })
+      } else if (block.kind === 'tool-call') {
+        const name = typeof block.name === 'string' && block.name !== '' ? block.name : '工具'
+        const callId = typeof block.callId === 'string' ? block.callId : ''
+        const task = persona.taskOf(block.argsRaw, name)
+        items.push({ kind: 'tool', text: persona.toolLine(task, callId !== '' ? callId : task, personaCfg, salt) })
+      } else if (block.kind === 'text' && typeof block.text === 'string' && block.text.trim() !== '') {
+        const preview = lastPreviewLine(block.text, 80)
+        if (preview !== '') items.push({ kind: 'writing', text: persona.writingLine(preview, personaCfg, salt) })
+      }
+      salt += 1
+    }
+  }
+  // 执行中的工具：与「准备调用」是不同阶段，各自成行；完全相同的行去重。
+  if (Array.isArray(runningCalls)) {
+    let salt = 0
+    for (const call of runningCalls) {
+      if (call === null || typeof call !== 'object') continue
+      const name = typeof call.name === 'string' && call.name !== '' ? call.name : null
+      if (name === null) continue
+      const task = persona.taskOf(call.argsRaw, name)
+      items.push({ kind: 'tool-running', text: persona.runningLine(task, personaCfg, salt) })
+      salt += 1
+    }
+  }
+  const deduped = dedupeActivity(items)
+  if (deduped.length > 0) return deduped
+  return [{ kind: 'status', text: persona.idleLine('idle', personaCfg) }]
 }
 
 /** 单个会话节点 → 行（无文本/工具类返回 null 跳过）。 */

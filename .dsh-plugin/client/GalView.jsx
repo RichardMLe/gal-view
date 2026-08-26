@@ -6,26 +6,30 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StageView } from './StageView.jsx'
 import { Editor } from './Editor.jsx'
+import { PendingPanel } from './PendingPanel.jsx'
 import { createTypeState, setTarget, skip, advance, SPEEDS } from './typewriter.mjs'
 import {
-  nodesToLines, partialToText, deriveStatus, speakerFor, welcomeLine,
+  nodesToLines, partialToText, deriveActivity, speakerFor, welcomeLine, assistantDisplayName,
 } from './transcript.mjs'
 import { splitPages, createFitsMeasurer } from './paging.mjs'
+import { saveRootPrefix, nextSaveTitle } from './save.mjs'
+import { normalizePersona } from './persona.mjs'
 
 /** 玩家消息完整显示后的最短滞留时长（此后由模型状态触发翻页）。 */
 const STATUS_DWELL_MS = 1500
 /** 模型状态迟迟未到时的兜底等待上限（超过后按当前状态翻页）。 */
 const STATUS_MAX_WAIT_MS = 6000
 
-/** 发送玩家输入：走宿主输入机（adjudication/claim/默认 sink 同一管线）。 */
-function useSend(inputActions, draft, setDraft) {
+/** 发送玩家输入：走宿主输入机（adjudication/claim/默认 sink 同一管线）。
+ * 草稿与会话输入机共享：GAL 与「对话」栏同一草稿，切换标签页不丢。 */
+function useSend(inputActions, draft, clearDraft) {
   return useCallback(() => {
     const text = draft.trim()
     if (text === '') return
     inputActions.setDraft(text)
     inputActions.submit()
-    setDraft('')
-  }, [draft, inputActions, setDraft])
+    clearDraft()
+  }, [draft, inputActions, clearDraft])
 }
 
 /** 对话历史面板（右侧滑出）。 */
@@ -113,9 +117,199 @@ function SettingsPanel({ scene, api, onClose }) {
           <option value="fast">快</option>
         </select>
       </label>
-      <p className="gv-settings-hint">角色名称/颜色在编辑模式中修改；说话角色引用会实时生效。</p>
+      <label className="gv-settings-row">
+        <span>自动存档间隔</span>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={scene.settings.autoSaveEvery ?? 10}
+          onChange={e => {
+            const n = parseInt(e.target.value, 10)
+            if (Number.isFinite(n)) api.updateSettings({ autoSaveEvery: Math.min(100, Math.max(0, n)) })
+          }}
+        />
+      </label>
+      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」快照（0 = 关闭）；自动快照仅保留最新一个。角色名称/颜色在编辑模式中修改。</p>
     </div>
   )
+}
+
+/** 存档/读档面板：快照式（经典 galgame 语义）。
+ * SAVE = 当前会话最后已完成回合冻结为快照槽（xx-saveN / xx-自动N），永不改变；
+ * LOAD = 从槽派生新世界线 → 切换 → 销毁旧世界线（归档，列表消失）。
+ * 宿主不支持会话服务时给出可读提示，不抛错。 */
+function SavePanel({ api, mode, onClose }) {
+  const [index, setIndex] = useState(() => loadSaveIndex(api))
+  const [current, setCurrent] = useState(() => loadCurrentSession(api))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [editText, setEditText] = useState('')
+  const refresh = useCallback(() => {
+    setIndex(loadSaveIndex(api))
+    setCurrent(loadCurrentSession(api))
+  }, [api])
+  useEffect(() => {
+    refresh()
+    if (typeof api?.onSessions !== 'function') return
+    return api.onSessions(refresh)
+  }, [api, refresh])
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [onClose])
+  const save = async () => {
+    if (busy) return
+    if (typeof api?.saveSlot !== 'function' || api.hasSessionsService() !== true) {
+      setError('当前环境不支持会话分叉（sessions 服务不可用）')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await api.saveSlot()
+      setNotice('已创建快照「' + result.title + '」（永久保存，读档也不会改变它）')
+      refresh()
+    } catch (cause) {
+      setError(causeText(cause))
+    }
+    setBusy(false)
+  }
+  const load = async (id) => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.loadSave(id)
+      onClose()
+    } catch (cause) {
+      setError(causeText(cause))
+      setBusy(false)
+    }
+  }
+  // 手动存档改名：点击名称进入编辑，Enter/失焦提交，Escape 取消。
+  const beginRename = (slot) => {
+    setEditingId(slot.id)
+    setEditText(slot.title)
+    setError(null)
+  }
+  const commitRename = async (slot) => {
+    const text = editText.trim()
+    if (text === '' || text === slot.title) {
+      setEditingId(null)
+      return
+    }
+    try {
+      if (typeof api?.renameSlot !== 'function') throw new Error('当前环境不支持改名')
+      await api.renameSlot(slot.id, text)
+      setEditingId(null)
+      refresh()
+    } catch (cause) {
+      setError(causeText(cause))
+    }
+  }
+  const nextTitle = nextSaveTitle(saveRootPrefix(index.rootTitle), index.saves.map(s => s.n))
+  const renderSlotRows = (slots, isAuto) => slots.map(s => {
+    const editing = !isAuto && editingId === s.id
+    return (
+      <div className="gv-saves-row" key={s.id}>
+        {editing
+          ? <input
+              className="gv-saves-edit"
+              autoFocus
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+              onBlur={() => commitRename(s)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+                if (e.key === 'Escape') { setEditingId(null) }
+              }}
+            />
+          : <span
+              className={'gv-saves-name' + (isAuto ? '' : ' is-renamable')}
+              title={isAuto ? undefined : '点击改名'}
+              onClick={isAuto ? undefined : () => beginRename(s)}
+            >{s.title}</span>}
+        <span className="gv-saves-time">{formatTime(s.updatedAt)}</span>
+        {isAuto && <span className="gv-saves-badge">自动</span>}
+        {mode === 'load' && (
+          <button type="button" className="gv-btn" disabled={busy} onClick={() => load(s.id)}>读取</button>
+        )}
+      </div>
+    )
+  })
+  return (
+    <div className="gv-saves-layer" role="dialog" aria-label={mode === 'save' ? '存档' : '读档'}>
+      <div className="gv-saves">
+        <div className="gv-saves-head">
+          <span>{mode === 'save' ? '存档' : '读档'}</span>
+          <button type="button" className="gv-btn" onClick={onClose}>关闭</button>
+        </div>
+        {mode === 'save'
+          ? <p className="gv-saves-hint">存档 = 冻结当前进度的快照「{saveRootPrefix(index.rootTitle)}-save…」，之后读档永远不会改变它。</p>
+          : <p className="gv-saves-hint">读取存档 = 从快照重开一条世界线，旧世界线销毁。之后的对话发生在新线上。</p>}
+        {index.rootTitle !== '' && (
+          <p className="gv-saves-meta">主线程「{index.rootTitle}」</p>
+        )}
+        <div className="gv-saves-list">
+          {/* 自动存档槽位常驻（放在手动存档上面）；仅保留最新一个。 */}
+          <div className="gv-saves-group">自动存档</div>
+          {index.autos.length > 0
+            ? renderSlotRows(index.autos, true)
+            : <div className="gv-saves-empty gv-saves-auto-empty">当前无自动存档</div>}
+          <div className="gv-saves-group">手动存档</div>
+          {index.saves.length === 0 && <div className="gv-saves-empty">还没有手动存档</div>}
+          {renderSlotRows(index.saves, false)}
+        </div>
+        {mode === 'save' && (
+          <button type="button" className="gv-btn gv-btn-gold gv-saves-create" disabled={busy} onClick={save}>
+            创建存档（{nextTitle}）
+          </button>
+        )}
+        {error !== null && <p className="gv-saves-error">{error}</p>}
+        {notice !== null && <p className="gv-saves-notice">{notice}</p>}
+      </div>
+    </div>
+  )
+}
+
+/** 读取存档索引（api 缺失/异常时返回空结构）。 */
+function loadSaveIndex(api) {
+  try {
+    if (typeof api?.saveIndex !== 'function') return { rootId: null, rootTitle: '', saves: [], autos: [] }
+    return api.saveIndex()
+  } catch {
+    return { rootId: null, rootTitle: '', saves: [], autos: [] }
+  }
+}
+
+/** 当前会话 id（api 缺失/异常时返回 null）。 */
+function loadCurrentSession(api) {
+  try {
+    if (typeof api?.currentSessionId !== 'function') return null
+    return api.currentSessionId()
+  } catch {
+    return null
+  }
+}
+
+/** 时间戳 → YYYY-MM-DD HH:mm（无效值返回空串）。 */
+function formatTime(ts) {
+  if (typeof ts !== 'number' || !Number.isFinite(ts) || ts <= 0) return ''
+  const d = new Date(ts)
+  const pad = n => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+}
+
+/** 响应失败的可读信息。 */
+function causeText(cause) {
+  if (cause === null || cause === undefined) return '操作失败'
+  if (typeof cause === 'object' && typeof cause.message === 'string') return cause.message
+  return String(cause)
 }
 
 /**
@@ -154,7 +348,7 @@ function useFillSessionArea(rootRef) {
  * GAL 视窗组件（conversation.view 槽位条目）。
  * @param props - 槽位框架注入：sessionId/useSession/useInput/inputActions + inject 面的 useScene/useHistory/api。
  */
-export function GalView({ useSession, inputActions, useScene, useHistory, useAssets, useFonts, useStore, actions, api }) {
+export function GalView({ useSession, useInput, inputActions, useScene, useHistory, useAssets, useFonts, useStore, useProjection, actions, api }) {
   const scene = useScene(s => s)
   const history = useHistory(h => h)
   const assets = useAssets(a => a)
@@ -172,7 +366,19 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
   const [auto, setAuto] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [draft, setDraft] = useState('')
+  // 存档/读档面板（模式：'save' | 'load' | null 关闭）。
+  const [saveMode, setSaveMode] = useState(null)
+  // 提问进行时由 PendingPanel 注入：非 null 时输入框按钮切换为「提交答案」。
+  const [questionControl, setQuestionControl] = useState(null)
+  // 草稿与会话输入机共享（InputState.draft）：切标签页/刷新不丢，且与「对话」栏互通。
+  // 无 useInput/inputActions 的独立挂载环境（冒烟测试）回退到本地状态。
+  const inputDraft = typeof useInput === 'function' ? useInput(s => s.draft) : undefined
+  const [localDraft, setLocalDraft] = useState('')
+  const draft = typeof inputDraft === 'string' ? inputDraft : localDraft
+  const setSharedDraft = useCallback((text) => {
+    if (inputActions !== null && inputActions !== undefined && typeof inputActions.setDraft === 'function') inputActions.setDraft(text)
+    else setLocalDraft(text)
+  }, [inputActions])
   const [type, setType] = useState(createTypeState)
   const [pages, setPages] = useState([])
   const [pageIndex, setPageIndex] = useState(0)
@@ -186,7 +392,84 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
   const lines = useMemo(() => nodesToLines(nodes), [nodes])
   const liveText = running ? partialToText(partial) : ''
   const lastLine = lines.length > 0 ? lines[lines.length - 1] : null
-  const aiStatus = deriveStatus({ running, partial, pending, lastLine, promptError })
+  // ---- 自动存档（主线程快照）----
+  // 回合数取 sessionStats 投影的 durable turns（每完成一轮对话 +1，与渲染批次/回复快慢无关；
+  // 投影缺失时回退窗口内玩家行数）。每完成 autoSaveEvery 次回合（默认 10，0=关）且
+  // 回合结束后创建 xx-自动N 快照。基线按会话持久化（localStorage），标签页切换不重置。
+  const autoSaveEvery = typeof scene.settings.autoSaveEvery === 'number' ? scene.settings.autoSaveEvery : 10
+  const sessionStats = typeof useProjection === 'function' ? useProjection('sessionStats') : undefined
+  const playerTurns = useMemo(() => lines.filter(l => l.kind === 'player').length, [lines])
+  const turns = typeof sessionStats?.turns === 'number' ? sessionStats.turns : playerTurns
+  const autoSessionId = typeof api?.currentSessionId === 'function'
+    ? (api.currentSessionId() ?? 'default')
+    : (typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'default')
+  const autoKey = 'gal-view:auto:' + autoSessionId
+  const autoSaveRef = useRef({ key: autoKey, baseline: null, saving: false })
+  if (autoSaveRef.current.key !== autoKey) {
+    autoSaveRef.current = { key: autoKey, baseline: null, saving: false }
+  }
+  if (autoSaveRef.current.baseline === null) {
+    let stored = null
+    try {
+      const n = Number(window.localStorage.getItem(autoKey))
+      if (Number.isFinite(n) && n > 0) stored = Math.floor(n)
+    } catch { /* 隐私模式 */ }
+    // 无记录（新会话）→ 基线=当前回合数；有记录 → 沿用（切标签页/刷新不重置）。
+    autoSaveRef.current.baseline = stored ?? turns
+  }
+  useEffect(() => {
+    const ref = autoSaveRef.current
+    if (autoSaveEvery <= 0 || ref.saving) return
+    if (turns - ref.baseline < autoSaveEvery) return
+    if (running || (Array.isArray(pending) && pending.length > 0)) return
+    if (typeof api?.autoSave !== 'function' || api.hasSessionsService() !== true) return
+    ref.baseline = turns
+    try { window.localStorage.setItem(autoKey, String(ref.baseline)) } catch { /* 忽略 */ }
+    ref.saving = true
+    api.autoSave().then(
+      () => { ref.saving = false },
+      () => {
+        ref.saving = false
+        ref.baseline = Math.max(0, ref.baseline - autoSaveEvery)
+      },
+    )
+  }, [turns, autoSaveEvery, running, pending, api, autoKey])
+  // 人设/选项框样式：场景设置驱动（读取时再归一化：编辑中的非法中间态兜底）。
+  const personaCfg = useMemo(() => normalizePersona(scene.settings.persona), [scene.settings.persona])
+  const pendingStyle = scene.settings.pendingStyle ?? null
+  const rootStyle = pendingStyle !== null && typeof pendingStyle === 'object'
+    ? {
+      '--gv-pending-title-size': String(pendingStyle.titleSize ?? 16) + 'px',
+      '--gv-pending-option-size': String(pendingStyle.optionSize ?? 15) + 'px',
+      '--gv-pending-detail-size': String(pendingStyle.detailSize ?? 15) + 'px',
+    }
+    : undefined
+  // 结构化活动行：思考摘要/工具调用/生成预览/等待决定/错误（状态页与状态行共用）。
+  const activity = useMemo(
+    () => deriveActivity({ running, partial, pending, runningCalls, lastLine, promptError, personaCfg }),
+    [running, partial, pending, runningCalls, lastLine, promptError, personaCfg],
+  )
+  // 前台节流：后台流式每块都到达 → 活动行取 350ms 尾随去抖展示，
+  // 文字刷新速度与后端解耦（模型执行速度不变）。
+  const [shownActivity, setShownActivity] = useState(activity)
+  const lastActivityRef = useRef(activity)
+  useEffect(() => {
+    if (activity === lastActivityRef.current) return
+    const timer = setTimeout(() => {
+      lastActivityRef.current = activity
+      setShownActivity(activity)
+    }, 350)
+    return () => { clearTimeout(timer) }
+  }, [activity])
+  // 上下文占用：官方 contextPressure 投影（projectedTokens/pressureTokens + contextWindow）；
+  // 槽位未注入 useProjection 或投影未就绪时隐藏指示条。
+  const contextPressure = typeof useProjection === 'function' ? useProjection('contextPressure') : undefined
+  const contextOccupancy = useMemo(() => {
+    const used = contextPressure !== null && typeof contextPressure === 'object' ? (contextPressure.projectedTokens ?? contextPressure.pressureTokens) : undefined
+    const windowSize = contextPressure !== null && typeof contextPressure === 'object' ? contextPressure.contextWindow : undefined
+    if (typeof used !== 'number' || typeof windowSize !== 'number' || windowSize <= 0) return null
+    return { percent: Math.min(100, Math.max(0, Math.round(used / windowSize * 100))), used, windowSize }
+  }, [contextPressure])
   const fallback = blank ? welcomeLine(scene) : null
   // 理想规则（用户约定）：文本框显示用户内容 → 名牌「你」；显示 AI 内容 → 名牌 DeepSeek。
   // 运行期间（AI 正文未到）先显示最后一条玩家消息；滞留片刻后「换页」到状态页。
@@ -419,13 +702,10 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
     if (stored.statusHold === true) setStatusHold(true)
   }, [running, pendingPlayer])
 
-  // 目标文本变化 → 重设打字机（自动播放时直接追平）。
+  // 目标文本变化 → 重设打字机（自动播放不再即时跳字：按正常速度继续打字，打完自动翻页）。
   useEffect(() => {
-    setType(t => {
-      const next = setTarget(t, typedTarget)
-      return auto ? skip(next) : next
-    })
-  }, [typedTarget, auto])
+    setType(t => setTarget(t, typedTarget))
+  }, [typedTarget])
 
   // 自动播放：当前页显示完毕后，短暂停留自动翻下一页（下一页同样逐字打出/自动追平）。
   useEffect(() => {
@@ -454,6 +734,22 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
 
   const skipTyping = useCallback(() => { setType(t => skip(t)) }, [])
 
+  // 快进（skip 按钮）：AI 运行中 → 追平当前页；定稿 → 直接跳到当前对话最后一页并完整显示。
+  const skipAll = useCallback(() => {
+    if (running) {
+      setType(t => skip(t))
+      return
+    }
+    if (pagesReady && pages.length > 0) {
+      const last = pages.length - 1
+      const page = pages[last] ?? ''
+      setPageIndex(last)
+      setType({ target: page, shown: page, done: true })
+      return
+    }
+    setType(t => skip(t))
+  }, [running, pagesReady, pages])
+
   // 点击文本框：打字中 → 追平当前页；已打完且有下一页 → 翻页（下一页同样逐字打出）。
   const onTextClick = useCallback(() => {
     if (running) {
@@ -465,23 +761,38 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
       setPageIndex(pageIndex + 1)
     }
   }, [running, type.done, hasNextPage, pageIndex, skipTyping])
-  const send = useSend(inputActions, draft, setDraft)
+  const send = useSend(inputActions, draft, () => setSharedDraft(''))
 
-  // 透明功能按钮：历史/自动/快进/设置（原底部控制栏已移除，功能由场景内按钮承载）。
+  // 透明功能按钮：历史/自动/快进/设置/存档/读档（原底部控制栏已移除，功能由场景内按钮承载）。
+  // 动作名归一化（容忍常见别名/中文），点击即分发。
   const handleAction = useCallback(action => {
-    switch (action) {
+    const key = String(action ?? '').trim().toLowerCase()
+    switch (key) {
       case 'history': setHistoryOpen(o => !o); break
       case 'auto': setAuto(a => !a); break
-      case 'skip': skipTyping(); break
-      case 'settings': setSettingsOpen(o => !o); break
+      case 'skip':
+      case 'fast': skipAll(); break
+      case 'settings':
+      case 'config': setSettingsOpen(o => !o); break
+      case 'save':
+      case 'saves':
+      case '存档': setSaveMode('save'); break
+      case 'load':
+      case 'loads':
+      case '读档':
+      case '读取': setSaveMode('load'); break
       default: break
     }
-  }, [skipTyping])
+  }, [skipAll])
 
   const line = currentLine !== null ? { ...currentLine, speaker } : null
+  // 输入框默认语句：以 AI 名牌名为准（名牌元素缺失时回退助手角色名）。
+  const aiDisplayName = useMemo(() => assistantDisplayName(scene), [scene])
+  const inputPlaceholder = '你想和' + aiDisplayName + '说什么呢？'
+  // 背景由舞台 cover 模式铺满整个视窗（第 12 轮调整），不再需要模糊延展层。
 
   return (
-    <div className="gv-root" data-gal-view="" data-gal-mode={mode} ref={rootRef}>
+    <div className="gv-root" data-gal-view="" data-gal-mode={mode} style={rootStyle} ref={rootRef}>
       <div className="gv-topbar">
         <div className="gv-brand">
           <span className="gv-brand-mark" aria-hidden="true" />
@@ -535,14 +846,29 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
               onSkip={skipTyping}
               onTextClick={onTextClick}
               hasNextPage={hasNextPage}
-              // 错误行正文已含「[错误] …」：不再叠加「（出错…）」状态行；其余非运行状态照常显示。
-              aiStatus={running ? (showStatusPage ? aiStatus : null) : (currentLine !== null && currentLine.error === true ? null : aiStatus)}
+              // 错误行正文已含「[错误] …」：不再叠加「出错」活动行；其余非运行状态照常显示。
+              activity={running ? (showStatusPage ? shownActivity : null) : (currentLine !== null && currentLine.error === true ? null : shownActivity)}
               onAction={handleAction}
               autoOn={auto}
             />
+            {/* 上下文占用指示条：覆盖层，下移 12px 贴于背景下缘与输入框之间；
+                不占布局（舞台区大小不变）；pointer-events:none 不挡输入框。 */}
+            {contextOccupancy !== null && (
+              <div className="gv-context" aria-label="上下文占用">
+                <div className="gv-context-track">
+                  <div className={'gv-context-fill' + (contextOccupancy.percent >= 90 ? ' is-high' : '')} style={{ width: contextOccupancy.percent + '%' }} />
+                  <span className="gv-context-whale" style={{ left: contextOccupancy.percent + '%' }} aria-hidden="true">🐳</span>
+                </div>
+                <span className="gv-context-num">{contextOccupancy.percent}%</span>
+              </div>
+            )}
           </div>
+          {/* 决策面板：等待批准/回答时浮于舞台上方，直接作答，无需切回「对话」栏。
+              提问期间底部输入行隐藏（作答全部发生在面板的选项列表与输入组合框内）。
+              输入行始终挂载（仅 visibility 隐藏）：舞台区布局零变化，不分页缩放/闪烁。 */}
+          <PendingPanel pending={pending} draft={draft} setSharedDraft={setSharedDraft} onControl={setQuestionControl} />
           <form
-            className="gv-input"
+            className={'gv-input' + (questionControl !== null ? ' is-hidden' : '')}
             onSubmit={e => {
               e.preventDefault()
               send()
@@ -551,14 +877,14 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
             <textarea
               className="gv-input-box"
               value={draft}
-              onChange={e => setDraft(e.target.value)}
+              onChange={e => setSharedDraft(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   send()
                 }
               }}
-              placeholder="输入你想说的话……"
+              placeholder={inputPlaceholder}
               rows={2}
               aria-label="玩家输入"
             />
@@ -582,6 +908,7 @@ export function GalView({ useSession, inputActions, useScene, useHistory, useAss
 
       {historyOpen && <HistoryPanel scene={scene} lines={lines} onClose={() => setHistoryOpen(false)} />}
       {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} />}
+      {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} />}
     </div>
   )
 }

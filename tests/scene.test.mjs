@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import {
   defaultScene, makeElement, normalizeScene, normalizeElement, cloneScene,
   elementStyle, sortElements, findDialogue, snapValue, elementCenter, nextCharacterLetter,
-  ensureDialogueText, ensureSpeakerNames, ensureActionButtons, STAGE_W, STAGE_H, MIN_SIZE, ELEMENT_TYPES,
+  ensureDialogueText, ensureSpeakerNames, ensureActionButtons, ensureBackgroundCover,
+  ensureSaveButtonLayout,
+  STAGE_W, STAGE_H, MIN_SIZE, ELEMENT_TYPES,
 } from '../.dsh-plugin/client/scene.mjs'
 
 test('defaultScene 是合法场景：含背景/两角色/对话框/独立台词，舞台 16:9', () => {
@@ -24,8 +26,8 @@ test('defaultScene 是合法场景：含背景/两角色/对话框/独立台词�
   assert.equal(player.text, '你')
   assert.equal(ai.text, 'DeepSeek')
   const btns = scene.elements.filter(e => e.type === 'action-button')
-  assert.equal(btns.length, 4)
-  assert.deepEqual(btns.map(b => b.action), ['history', 'auto', 'skip', 'settings'])
+  assert.equal(btns.length, 6)
+  assert.deepEqual(btns.map(b => b.action), ['history', 'auto', 'skip', 'settings', 'save', 'load'])
   const chars = scene.elements.filter(e => e.type === 'character')
   assert.equal(chars.length, 2)
   assert.equal(chars[0].character.label, 'CHARACTER A')
@@ -75,15 +77,32 @@ test('ensureSpeakerNames 迁移：删除旧版说话人元素，替换为双名�
   assert.equal(bareMigrated.elements[0].x, 46)
 })
 
-test('ensureActionButtons 迁移：缺功能按钮时补四个预设；幂等；无对话框不补', () => {
+test('ensureActionButtons 迁移：按 id 补六个预设；保存/读取落在历史按钮正下方；幂等；无对话框不补', () => {
   const scene = normalizeScene({ settings: { stageW: 960, stageH: 540 }, elements: [normalizeElement({ id: 'dialogue', type: 'dialogue' })] })
   const migrated = ensureActionButtons(scene)
   const btns = migrated.elements.filter(el => el.type === 'action-button')
-  assert.equal(btns.length, 4)
-  assert.deepEqual(btns.map(b => b.action), ['history', 'auto', 'skip', 'settings'])
+  assert.equal(btns.length, 6)
+  assert.deepEqual(btns.map(b => b.action), ['history', 'auto', 'skip', 'settings', 'save', 'load'])
   assert.equal(btns[0].x, 740) // stageW - 220
   assert.equal(btns[3].x, 896)
+  assert.equal(btns[4].y, 48) // 保存/读取换行
+  assert.equal(btns[5].y, 48)
   assert.equal(ensureActionButtons(migrated), migrated) // 幂等
+  // 已有历史按钮时：保存/读取放在历史正下方
+  const withHistory = normalizeScene({
+    settings: { stageW: 1920, stageH: 1080 },
+    elements: [
+      normalizeElement({ id: 'dialogue', type: 'dialogue' }),
+      normalizeElement({ id: 'btn-history', type: 'action-button', x: 100, y: 200, w: 110, h: 44 }),
+    ],
+  })
+  const migrated2 = ensureActionButtons(withHistory)
+  const save = migrated2.elements.find(el => el.id === 'btn-save')
+  const load = migrated2.elements.find(el => el.id === 'btn-load')
+  assert.equal(save.x, 100)
+  assert.equal(save.y, 200 + 44 + 8)
+  assert.equal(load.x, 100 + 110 + 8)
+  assert.equal(load.y, 200 + 44 + 8)
   const bare = normalizeScene({ elements: [] })
   assert.equal(ensureActionButtons(bare), bare)
 })
@@ -115,6 +134,74 @@ test('normalizeSettings 白名单合并 + 类型兜底', () => {
   assert.equal(s.gridSize, 64)
   assert.equal(s.snap, false)
   assert.deepEqual(s.welcome, ['hi'])
+})
+
+test('normalizeSettings：persona/pendingStyle 白名单合并', () => {
+  const s = normalizeScene({
+    settings: {
+      persona: { witPercent: 99, enabled: false, pools: { thinking: ['A', ' ', 'B'] } },
+      pendingStyle: { titleSize: 99, optionSize: '12', detailSize: 'x' },
+    },
+  }).settings
+  assert.equal(s.persona.witPercent, 30)
+  assert.equal(s.persona.enabled, false)
+  assert.deepEqual(s.persona.pools.thinking, ['A', 'B'])
+  assert.equal(s.persona.pools.executing.length, 18, '未提供池回退默认')
+  assert.equal(s.pendingStyle.titleSize, 24)
+  assert.equal(s.pendingStyle.optionSize, 12)
+  assert.equal(s.pendingStyle.detailSize, 15)
+  // 空输入回退默认
+  const d = normalizeScene({}).settings
+  assert.equal(d.persona.enabled, true)
+  assert.equal(d.persona.witPercent, 15)
+  assert.equal(d.pendingStyle.titleSize, 16)
+  assert.equal(d.autoSaveEvery, 10)
+  // 自动存档间隔夹取
+  assert.equal(normalizeScene({ settings: { autoSaveEvery: 999 } }).settings.autoSaveEvery, 100)
+  assert.equal(normalizeScene({ settings: { autoSaveEvery: 0 } }).settings.autoSaveEvery, 0)
+})
+
+test('ensureBackgroundCover：铺满型背景归一到舞台尺寸；其余不动；幂等', () => {
+  const scene = normalizeScene({
+    settings: { stageW: 1920, stageH: 1080 },
+    elements: [
+      { id: 'bg', type: 'background', name: '背景', x: -24, y: -24, w: 2016, h: 1248, image: 'asset-x' },
+      { id: 'bg-small', type: 'background', name: '装饰背景', x: 100, y: 100, w: 800, h: 600, image: 'asset-y' },
+    ],
+  })
+  const next = ensureBackgroundCover(scene)
+  const bg = next.elements.find(el => el.id === 'bg')
+  assert.deepEqual({ x: bg.x, y: bg.y, w: bg.w, h: bg.h }, { x: 0, y: 0, w: 1920, h: 1080 })
+  const small = next.elements.find(el => el.id === 'bg-small')
+  assert.deepEqual({ x: small.x, y: small.y, w: small.w, h: small.h }, { x: 100, y: 100, w: 800, h: 600 })
+  // 幂等：二次迁移不改变
+  assert.deepEqual(ensureBackgroundCover(next), next)
+})
+
+test('ensureSaveButtonLayout：旧自动补位（历史正下方）归位到标准底排；自定义排布不动', () => {
+  const legacy = normalizeScene({
+    settings: { stageW: 1920, stageH: 1080 },
+    elements: [
+      normalizeElement({ id: 'btn-history', type: 'action-button', x: 1194, y: 1036, w: 110, h: 44 }),
+      normalizeElement({ id: 'btn-save', type: 'action-button', x: 1194, y: 1088, w: 110, h: 44 }),
+      normalizeElement({ id: 'btn-load', type: 'action-button', x: 1312, y: 1088, w: 110, h: 44 }),
+    ],
+  })
+  const moved = ensureSaveButtonLayout(legacy)
+  const save = moved.elements.find(el => el.id === 'btn-save')
+  const load = moved.elements.find(el => el.id === 'btn-load')
+  assert.deepEqual({ x: save.x, y: save.y, w: save.w, h: save.h }, { x: 1304, y: 1036, w: 116, h: 44 })
+  assert.deepEqual({ x: load.x, y: load.y, w: load.w, h: load.h }, { x: 1425, y: 1036, w: 116, h: 44 })
+  // 自定义排布不动
+  const custom = normalizeScene({
+    settings: { stageW: 1920, stageH: 1080 },
+    elements: [
+      normalizeElement({ id: 'btn-history', type: 'action-button', x: 100, y: 200, w: 110, h: 44 }),
+      normalizeElement({ id: 'btn-save', type: 'action-button', x: 300, y: 900, w: 120, h: 44 }),
+      normalizeElement({ id: 'btn-load', type: 'action-button', x: 500, y: 900, w: 120, h: 44 }),
+    ],
+  })
+  assert.deepEqual(ensureSaveButtonLayout(custom), custom)
 })
 
 test('makeElement 各类型产生合法元素，角色字母递增', () => {

@@ -85,9 +85,23 @@ function ElementBody({ el, mode, speaking, asset }) {
   }
 }
 
+/** 活动行列表：状态页/状态行共用（思考摘要/工具/生成预览/等待决定/错误）。 */
+function ActivityLines({ activity, prefixNewline }) {
+  if (!Array.isArray(activity) || activity.length === 0) return null
+  return (
+    <span className="gv-dtext-activity" aria-label="AI 状态">
+      {activity.map((item, index) => (
+        <span key={index} className={'gv-activity-item gv-activity-' + item.kind}>
+          {(index === 0 && prefixNewline ? '\n' : '') + item.text}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 /** 游戏模式实时对话框面板（角色名牌 + 底板；正文由独立的「台词」元素承载）。
  * 旧场景缺少台词元素时回退到内嵌正文（dtextEl 为 null）。 */
-function DialogueBox({ el, line, type, pinned, onSkip, asset, dtextEl, aiStatus }) {
+function DialogueBox({ el, line, type, pinned, onSkip, asset, dtextEl, activity }) {
   const bodyRef = useRef(null)
   useEffect(() => {
     if (pinned) return // 流式/测量期间钉住开头，不追底滚动
@@ -119,9 +133,7 @@ function DialogueBox({ el, line, type, pinned, onSkip, asset, dtextEl, aiStatus 
         <div className="gv-dialogue-body" ref={bodyRef}>
           <span className="gv-dialogue-text">{type.shown}</span>
           {!type.done && <span className="gv-dialogue-caret" aria-hidden="true" />}
-          {aiStatus !== null && aiStatus !== undefined && aiStatus !== '' && (
-            <span className="gv-dtext-status">{(type.shown !== '' ? '\n' : '') + '（' + aiStatus + '…）'}</span>
-          )}
+          <ActivityLines activity={activity} prefixNewline={type.shown !== ''} />
         </div>
       )}
     </div>
@@ -147,8 +159,8 @@ function LiveSpeakerName({ el, line }) {
 /** 游戏模式实时台词：渲染进独立的「台词」元素（位置/尺寸/字号/颜色随元素属性）。
  * 点击 = Galgame 翻页：打字中追平当前页；已打完且存在下一页 → 显示下一页。
  * 省略号插在最后一个可见字符之后、尾随换行符之前（否则会排到空行行首）。
- * AI 运行期间在文本下方追加状态行：\n（思考中…）/（编写代码中…）。 */
-function LiveDialogueText({ el, type, running, pinned, onTextClick, hasNextPage, aiStatus }) {
+ * AI 运行期间在文本下方追加活动行：思考摘要/工具调用/生成预览/等待决定。 */
+function LiveDialogueText({ el, type, running, pinned, onTextClick, hasNextPage, activity }) {
   const bodyRef = useRef(null)
   useEffect(() => {
     if (pinned) return // 流式/测量期间钉住开头（展示第一段，不追尾滚动）
@@ -174,9 +186,7 @@ function LiveDialogueText({ el, type, running, pinned, onTextClick, hasNextPage,
       {showEllipsis && <span className="gv-dtext-ellipsis" aria-hidden="true">…</span>}
       {trailing !== '' && <span className="gv-dialogue-text">{trailing}</span>}
       {!type.done && <span className="gv-dialogue-caret" aria-hidden="true" />}
-      {aiStatus !== null && aiStatus !== undefined && aiStatus !== '' && (
-        <span className="gv-dtext-status" aria-label={'AI 状态：' + aiStatus}>{(visible !== '' ? '\n' : '') + '（' + aiStatus + '…）'}</span>
-      )}
+      <ActivityLines activity={activity} prefixNewline={visible !== ''} />
       {showEllipsis && <span className="gv-dtext-more" aria-hidden="true">▼</span>}
     </div>
   )
@@ -219,11 +229,11 @@ function SelectionOverlay({ el, onBeginGesture }) {
  * @param props.onSkip - 对话框点击（游戏模式）。
  * @param props.onTextClick - 台词文本框点击（翻页/追平）。
  * @param props.hasNextPage - 当前行是否还有下一页（显示「▼」提示）。
- * @param props.aiStatus - AI 运行状态文本（思考中/编写代码中；null = 不显示）。
+ * @param props.activity - AI 活动行数组 [{ kind, text }]（思考/工具/生成/等待/错误；空 = 不显示）。
  * @param props.onAction - 透明按钮功能回调（游戏模式；history/auto/skip/settings）。
  * @param props.autoOn - 自动播放开关状态（透明「自动」按钮的 is-on 视觉）。
  */
-export function StageView({ scene, assetsMap, mode, line, type, running, pinned, selectedId, onSelect, api, onSkip, onTextClick, hasNextPage, aiStatus, onAction, autoOn }) {
+export function StageView({ scene, assetsMap, mode, line, type, running, pinned, selectedId, onSelect, api, onSkip, onTextClick, hasNextPage, activity, onAction, autoOn }) {
   const wrapRef = useRef(null)
   const stageRef = useRef(null)
   const gesture = useRef(null)
@@ -232,6 +242,7 @@ export function StageView({ scene, assetsMap, mode, line, type, running, pinned,
 
   const sw = scene.settings.stageW
   const sh = scene.settings.stageH
+  const editor = mode === 'editor'
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -240,20 +251,29 @@ export function StageView({ scene, assetsMap, mode, line, type, running, pinned,
       const rect = wrap.getBoundingClientRect()
       const availW = Math.max(120, rect.width - 24)
       const availH = Math.max(120, rect.height - 24)
-      setScale(Math.min(availW / sw, availH / sh))
+      if (editor) {
+        // 编辑模式：contain 适配——必须看到整个舞台（WYSIWYG）。
+        setScale(Math.min(availW / sw, availH / sh))
+      } else {
+        // 游戏模式：cover 适配为主（背景铺满窗口），但保底 44px 底排带完整可见——
+        // 窗口更宽、cover 会裁掉按钮/对话框下缘时，退回带上下留白的保守缩放，
+        // 保证任意窗口尺寸下界面元素不与输入框冲合、布局一致。
+        const cover = Math.max(availW / sw, availH / sh)
+        const bandSafe = availH / (sh - 44)
+        setScale(Math.min(cover, bandSafe))
+      }
     }
     measure()
     if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(measure)
     ro.observe(wrap)
     return () => { ro.disconnect() }
-  }, [sw, sh])
+  }, [sw, sh, editor])
 
   const visible = sortElements(scene.elements.filter(el => !el.hidden))
   const dialogue = findDialogue(scene)
   const dtext = scene.elements.find(el => el.type === 'dialogue-text' && !el.hidden) ?? null
   const snames = scene.elements.filter(el => el.type === 'speaker-name' && !el.hidden)
-  const editor = mode === 'editor'
   // 游戏模式下，对话框与台词元素由实时渲染接管（不参与普通元素渲染）。
   const renderElements = editor
     ? visible
@@ -403,19 +423,23 @@ export function StageView({ scene, assetsMap, mode, line, type, running, pinned,
               onPointerDown={editor && !el.locked && el.type !== 'background'
                 ? e => beginGesture(e, el, 'move', null)
                 : undefined}
-              onClick={mode === 'game' && el.type === 'action-button' && el.action !== '' && onAction !== undefined
+              onClick={mode === 'game' && (el.type === 'action-button' || el.type === 'button') && el.action !== '' && onAction !== undefined
                 ? () => onAction(el.action)
                 : undefined}
             >
               <ElementBody el={el} mode={mode} asset={asset} speaking={mode === 'game' && line !== null && line.kind === 'assistant' && el.id === scene.settings.assistantSpeaker} />
+              {/* 自动播放开启：auto 按钮旁转圈提示。 */}
+              {mode === 'game' && el.type === 'action-button' && el.action === 'auto' && autoOn && (
+                <span className="gv-auto-spin" aria-hidden="true" />
+              )}
             </div>
           )
         })}
         {!editor && line !== null && (
-          <DialogueBox el={dialogue} line={line} type={type} pinned={pinned} onSkip={onSkip} asset={assetOf(dialogue)} dtextEl={dtext} aiStatus={aiStatus} />
+          <DialogueBox el={dialogue} line={line} type={type} pinned={pinned} onSkip={onSkip} asset={assetOf(dialogue)} dtextEl={dtext} activity={activity} />
         )}
         {!editor && line !== null && dtext !== null && (
-          <LiveDialogueText el={dtext} type={type} running={running} pinned={pinned} onTextClick={onTextClick} hasNextPage={hasNextPage} aiStatus={aiStatus} />
+          <LiveDialogueText el={dtext} type={type} running={running} pinned={pinned} onTextClick={onTextClick} hasNextPage={hasNextPage} activity={activity} />
         )}
         {!editor && snames.map(el => (
           <LiveSpeakerName key={el.id} el={el} line={line} />

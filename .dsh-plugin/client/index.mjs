@@ -13,6 +13,7 @@ import { GalViewSettingsTab } from './SettingsTab.jsx'
 import {
   defaultScene, normalizeScene, cloneScene, makeElement, makeId, sortElements,
   ELEMENT_TYPES, ensureDialogueText, ensureSpeakerNames, ensureActionButtons,
+  ensureBackgroundCover, ensureSaveButtonLayout,
 } from './scene.mjs'
 import {
   ASSET_MIME, MAX_ASSET_BYTES, normalizeAsset, readFileAsDataUrl, measureImage,
@@ -23,6 +24,8 @@ import {
   extOf, embedFonts, extractFonts, createIdbFonts,
 } from './fonts.mjs'
 import { createObservable, createHistory, createStorage, loadJSON, saveJSON } from './store.mjs'
+import { saveRootPrefix, rootOf, nextSaveTitle, nextAutoTitle, isValidSlotTitle } from './save.mjs'
+import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
 import presetScene from '../../gal-scene.json'
 
@@ -102,8 +105,11 @@ function createReadStore() {
   }
 }
 
-/** 场景 API 工厂：所有变更实时写 sceneSource；历史栈承载可撤销快照；素材/字体库读写 IDB。 */
-function createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase) {
+/** 场景 API 工厂：所有变更实时写 sceneSource；历史栈承载可撤销快照；素材/字体库读写 IDB。
+ * sessionsSvc 可选：客户端 sessions 服务(ctx.get('sessions'))——分叉存档(SAVE=分叉、
+ * LOAD=切换)依赖它；workspacesSvc 可选：工作区服务(ctx.get('workspaces'))——
+ * archiveSession 在它上面(不在 sessions 上)。缺失时存档相关方法降级。 */
+function createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc) {
   const current = () => sceneSource.getSnapshot()
 
   const commit = next => {
@@ -401,7 +407,199 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (typeof id !== 'string' || id === '') return null
       return fontsSource.getSnapshot().map.get(id) ?? null
     },
+
+    // ---- 快照式存档（会话级） ----
+    // SAVE：fork(当前会话) → 冻结快照槽（xx-saveN / xx-自动N），随后归档——槽位不出现在
+    //   工作区会话列表（归档不删数据，读档仍可 fork）；槽位名录持久化在 localStorage 注册表，
+    //   不依赖会话列表快照。
+    // LOAD：fork(槽) → 新世界线 → 切过去 → 新线改回主线程原名 → 归档旧世界线。
+    hasSessionsService() {
+      return sessionsSvc !== undefined && sessionsSvc !== null
+        && typeof sessionsSvc.fork === 'function'
+        && typeof sessionsSvc.open === 'function'
+    },
+    currentSessionId() {
+      const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
+      return typeof snapshot?.current === 'string' ? snapshot.current : null
+    },
+    /** 主线程标题：沿当前会话父链上溯到根（byId 缺失时回退当前会话标题）。 */
+    rootTitleOf(current, byId) {
+      const rootId = rootOf(byId, current)
+      const title = byId?.[rootId]?.title
+      return typeof title === 'string' && title !== '' ? title : (byId?.[current]?.title ?? '')
+    },
+    /** 读/写槽位注册表（localStorage；归档后会话列表不可见，名录必须自持）。
+     * 读取即过滤：自动存档仅保留最新一条（旧版本遗留的多条自动档在界面上直接消失，
+     * 不涉及任何物理删除）。 */
+    readSlotsRegistry() {
+      try {
+        const raw = storage?.getItem?.(SLOTS_KEY) ?? null
+        if (raw === null) return { rootTitle: '', saves: [], autos: [] }
+        const parsed = JSON.parse(raw)
+        const saves = Array.isArray(parsed.saves) ? parsed.saves : []
+        const autos = Array.isArray(parsed.autos) ? parsed.autos : []
+        return {
+          rootTitle: typeof parsed.rootTitle === 'string' ? parsed.rootTitle : '',
+          saves,
+          autos: autos.length > 0 ? [autos[autos.length - 1]] : [],
+        }
+      } catch {
+        return { rootTitle: '', saves: [], autos: [] }
+      }
+    },
+    writeSlotsRegistry(reg) {
+      try {
+        storage?.setItem?.(SLOTS_KEY, JSON.stringify(reg))
+      } catch {
+        // 隐私模式/配额：忽略（名录仅本会话有效）。
+      }
+    },
+    /** 面板数据：注册表名录 + 主线程标题（以注册表为准，父链解析兜底）。 */
+    saveIndex() {
+      const reg = this.readSlotsRegistry()
+      const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const current = sessionOf(snapshot)
+      let rootTitle = reg.rootTitle
+      if (current !== null) {
+        const byId = snapshot?.byId ?? {}
+        const chained = this.rootTitleOf(current, byId)
+        if (chained !== '' && !isSlotTitle(chained)) rootTitle = chained
+      }
+      return { rootId: current, rootTitle, saves: reg.saves, autos: reg.autos }
+    },
+    /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。 */
+    async archiveSessionQuiet(sessionId) {
+      const op = workspacesSvc?.archiveSession ?? sessionsSvc?.archiveSession
+      if (typeof op === 'function') {
+        try {
+          await op.call(workspacesSvc?.archiveSession !== undefined ? workspacesSvc : sessionsSvc, sessionId)
+        } catch {
+          // 归档失败不阻断：旧会话残留可在官方列表手动归档
+        }
+      }
+    },
+    /** 快照式创建：fork 当前会话 + 命名 + 归档 + 入名录。 */
+    async createSlot(title, auto) {
+      const current = this.currentSessionId()
+      if (current === null) throw new Error('未找到当前会话')
+      const snapshot = typeof sessionsSvc.list?.getSnapshot === 'function' ? sessionsSvc.list.getSnapshot() : null
+      const rootTitle = this.rootTitleOf(current, snapshot?.byId ?? {})
+      const childId = await sessionsSvc.fork({ sessionId: current })
+      try {
+        const binding = sessionsSvc.binding?.(childId)
+        const session = binding?.session ?? null
+        if (session !== null && typeof session.rename === 'function') await session.rename(title)
+      } catch {
+        // 忽略：保留继承标题
+      }
+      // 槽位归档：不出现在工作区会话列表（官方归档语义，磁盘数据保留供读档 fork）。
+      await this.archiveSessionQuiet(childId)
+      const reg = this.readSlotsRegistry()
+      const entry = { id: childId, title, updatedAt: Date.now() }
+      if (auto) {
+        // 自动存档仅保留最新一个：旧自动槽从名录移除（会话已归档，面板不再显示）。
+        reg.autos = [entry]
+      } else {
+        reg.saves.push(entry)
+      }
+      if (rootTitle !== '') reg.rootTitle = rootTitle
+      this.writeSlotsRegistry(reg)
+      return { title, childId }
+    },
+    /** 手动存档改名：仅中文/英文/数字/部分符号；更新名录 + 尝试同步会话标题（归档槽可能失败，忽略）。 */
+    async renameSlot(slotId, newTitle) {
+      const value = String(newTitle ?? '').trim()
+      if (!isValidSlotTitle(value)) throw new Error('名称仅支持中文、英文、数字与部分符号（- _ · … ！ ？ ! ? 。 .）')
+      const reg = this.readSlotsRegistry()
+      const target = reg.saves.find(s => s.id === slotId)
+      if (target === undefined) throw new Error('存档不存在')
+      target.title = value
+      this.writeSlotsRegistry(reg)
+      try {
+        const binding = sessionsSvc?.binding?.(slotId)
+        const session = binding?.session ?? null
+        if (session !== null && typeof session.rename === 'function') await session.rename(value)
+      } catch {
+        // 忽略：归档槽无法改名时以名录为准
+      }
+      return { id: slotId, title: value }
+    },
+    /** 主线程标题：注册表优先，缺失时沿当前会话父链解析（链缺失回退当前会话标题）。 */
+    mainTitle() {
+      const reg = this.readSlotsRegistry()
+      if (reg.rootTitle !== '') return reg.rootTitle
+      const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const current = sessionOf(snapshot)
+      if (current === null) return ''
+      return this.rootTitleOf(current, snapshot?.byId ?? {})
+    },
+    /** SAVE（手动）：创建快照槽 xx-saveN；不切换。 */
+    async saveSlot() {
+      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      const reg = this.readSlotsRegistry()
+      const prefix = saveRootPrefix(this.mainTitle())
+      const title = nextSaveTitle(prefix, reg.saves.map(s => s.n))
+      return this.createSlot(title, false)
+    },
+    /** 自动存档（主线程，特殊标识「自动」，永不覆盖）：创建快照槽 xx-自动N；不切换。 */
+    async autoSave() {
+      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      const reg = this.readSlotsRegistry()
+      const prefix = saveRootPrefix(this.mainTitle())
+      const title = nextAutoTitle(prefix, reg.autos.map(s => s.n))
+      return this.createSlot(title, true)
+    },
+    /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。 */
+    async loadSave(saveId) {
+      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      const oldCurrent = this.currentSessionId()
+      if (oldCurrent === null) throw new Error('未找到当前会话')
+      const reg = this.readSlotsRegistry()
+      const mainTitle = reg.rootTitle !== '' ? reg.rootTitle : this.rootTitleOf(oldCurrent, sessionsSvc?.list?.getSnapshot?.()?.byId ?? {})
+      const childId = await sessionsSvc.fork({ sessionId: saveId })
+      await sessionsSvc.open(childId)
+      // 新世界线沿用主线程原名（存档名只属于槽位）。
+      if (mainTitle !== '') {
+        try {
+          const binding = sessionsSvc.binding?.(childId)
+          const session = binding?.session ?? null
+          if (session !== null && typeof session.rename === 'function') await session.rename(mainTitle)
+        } catch {
+          // 忽略：保留继承名
+        }
+      }
+      // 销毁旧世界线：官方无删除接口，归档（列表消失、可恢复）。
+      await this.archiveSessionQuiet(oldCurrent)
+      return { childId }
+    },
+    /** LOAD：切换到指定会话（读档）。 */
+    async openSession(sessionId) {
+      if (typeof sessionsSvc?.open !== 'function') throw new Error('当前环境不支持切换会话')
+      await sessionsSvc.open(sessionId)
+    },
+    /** 会话列表订阅（存档面板自动刷新）；返回取消函数（服务缺失时返回 noop）。 */
+    onSessions(cb) {
+      const list = sessionsSvc?.list
+      if (list === undefined || list === null || typeof list.subscribe !== 'function') return () => {}
+      return list.subscribe(cb)
+    },
   }
+}
+
+/** 槽位注册表键（localStorage）。 */
+const SLOTS_KEY = 'gal-view:slots'
+
+/** 标题是否像槽位名（xx-saveN / xx-自动N）——主线程标题不应取槽位名。 */
+function isSlotTitle(title) {
+  return /-save\d+$/.test(title) || /-自动\d+$/.test(title)
+}
+
+/** 从会话列表快照取当前会话 id（兼容 { current } / { currentId } 字段名）。 */
+function sessionOf(snapshot) {
+  if (snapshot === null || snapshot === undefined) return null
+  if (typeof snapshot.current === 'string' && snapshot.current !== '') return snapshot.current
+  if (typeof snapshot.currentId === 'string' && snapshot.currentId !== '') return snapshot.currentId
+  return null
 }
 
 /**
@@ -417,6 +615,12 @@ export function apply(ctx) {
   styleEl.setAttribute('data-plugin', 'gal-view')
   styleEl.textContent = CSS
   document.head.append(styleEl)
+
+  // 分叉存档依赖客户端 sessions 服务（官方「分叉会话」同一通道）；缺失时功能降级。
+  // 必须在 createSceneApi 之前读取（方法体闭包引用该绑定）。
+  const sessionsSvc = ctx.get('sessions')
+  // archiveSession 在 workspaces 服务上（sessions 服务没有）；两者皆可缺省（功能降级）。
+  const workspacesSvc = ctx.get('workspaces')
 
   const storage = createStorage()
   // 素材库：IndexedDB 持久 + 内存可观察镜像（图片 dataURL 不进 localStorage）。
@@ -481,15 +685,35 @@ export function apply(ctx) {
   const presetBase = () => (hasPreset ? (normalizeScene(presetScene) ?? defaultScene()) : defaultScene())
   const savedScene = loadJSON(storage, PERSIST_KEY)
   const usePreset = hasPreset && savedScene === null
-  // 迁移：旧场景补「台词」、双名牌与四个预设功能按钮（幂等）。
-  const initial = ensureActionButtons(ensureSpeakerNames(ensureDialogueText(
+  // 迁移：旧场景补「台词」、双名牌与六个预设功能按钮（幂等）；铺满型背景归一；
+  // 旧自动补位的保存/读取按钮归位到标准底排（旧浏览器本地场景自愈）。
+  const initial = ensureSaveButtonLayout(ensureBackgroundCover(ensureActionButtons(ensureSpeakerNames(ensureDialogueText(
     (usePreset ? presetBase() : normalizeScene(savedScene)) ?? defaultScene(),
-  )))
+  )))))
   if (usePreset) seedPresetAssets()
   const sceneSource = createObservable(initial)
   const history = createHistory(HISTORY_LIMIT)
   const historySource = createObservable({ undo: 0, redo: 0 })
-  const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase)
+  const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc)
+
+  // 官方「对话」栏输入框默认语句：与 GAL 视窗一致「你想和AI名牌说什么呢？」
+  // 官方 UI 会随渲染重写 placeholder，观察器在每次改写后补回（scene 名牌变化也同步）。
+  const syncOfficialPlaceholder = () => {
+    const name = assistantDisplayName(sceneSource.getSnapshot())
+    const text = '你想和' + name + '说什么呢？'
+    for (const input of document.querySelectorAll('textarea[data-phase]')) {
+      if (input.getAttribute('placeholder') !== text) input.setAttribute('placeholder', text)
+    }
+  }
+  syncOfficialPlaceholder()
+  const placeholderObserver = new MutationObserver((records) => {
+    const touched = records.some(record => record.type === 'childList')
+      || records.some(record => record.type === 'attributes' && record.attributeName === 'placeholder')
+    if (touched) syncOfficialPlaceholder()
+  })
+  placeholderObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['placeholder'] })
+  const offScenePlaceholder = sceneSource.subscribe(syncOfficialPlaceholder)
+  ctx.effect(() => () => { placeholderObserver.disconnect(); offScenePlaceholder() }, 'gal-view: official placeholder')
 
   // 插件开关：设置选项卡控制会话页「GAL视窗」标签的显隐。
   const enabledSource = createObservable(loadJSON(storage, ENABLED_KEY) !== false)

@@ -19,6 +19,8 @@ export const STAGE_W = 960
 export const STAGE_H = 540
 export const MIN_SIZE = 12
 
+import { PERSONA_DEFAULTS, PERSONA_POOL_KEYS, normalizePersona } from './persona.mjs'
+
 /** 元素类型清单（添加菜单与编辑器校验共用）。 */
 export const ELEMENT_TYPES = Object.freeze([
   'background', 'character', 'dialogue', 'dialogue-text', 'speaker-name', 'text', 'image', 'button', 'action-button',
@@ -76,7 +78,54 @@ export function defaultSettings() {
     playerName: '你',
     typeSpeed: 'normal',
     welcome: ['……测试连接已经建立。', '这里是一个用于测试 AI 对话系统的 Galgame 场景。'],
+    persona: cloneDefaultPersona(),
+    pendingStyle: { titleSize: 16, optionSize: 15, detailSize: 15 },
+    autoSaveEvery: 10,
   }
+}
+
+/** 默认人设配置深拷贝（池数组不可共享可变引用）。 */
+export function cloneDefaultPersona() {
+  return {
+    enabled: PERSONA_DEFAULTS.enabled,
+    witPercent: PERSONA_DEFAULTS.witPercent,
+    pools: Object.fromEntries(PERSONA_POOL_KEYS.map(key => [key, [...PERSONA_DEFAULTS.pools[key]]])),
+  }
+}
+
+/** 归一化选项框样式（白名单 + 数字范围兜底；纯函数可单测）。
+ * locked：设置锁定；hidden：画布展示范例隐藏。均随场景持久。 */
+export function normalizePendingStyle(raw) {
+  const base = { titleSize: 16, optionSize: 15, detailSize: 15 }
+  if (!isRecord(raw)) return { ...base, locked: false, hidden: false }
+  const num = (value, fallback) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.min(24, Math.max(10, Math.round(n))) : fallback
+  }
+  return {
+    titleSize: num(raw.titleSize, base.titleSize),
+    optionSize: num(raw.optionSize, base.optionSize),
+    detailSize: num(raw.detailSize, base.detailSize),
+    locked: raw.locked === true,
+    hidden: raw.hidden === true,
+  }
+}
+
+/** 背景元素迁移：完全覆盖舞台的背景归一到舞台尺寸（cover 上采样 1.33×→1.15×，更清晰）。
+ * 仅处理 x≤0∧y≤0∧x+w≥stageW∧y+h≥stageH 的"铺满型"背景，用户特殊构图的背景不动。 */
+export function ensureBackgroundCover(scene) {
+  const stageW = scene.settings.stageW
+  const stageH = scene.settings.stageH
+  let changed = false
+  const elements = scene.elements.map(el => {
+    if (el.type !== 'background' || el.image === null || el.image === '') return el
+    if (el.x <= 0 && el.y <= 0 && el.x + el.w >= stageW && el.y + el.h >= stageH) {
+      changed = true
+      return { ...el, x: 0, y: 0, w: stageW, h: stageH }
+    }
+    return el
+  })
+  return changed ? { ...scene, elements } : scene
 }
 
 /** 默认 Demo 场景（需求十六：夜晚深色背景 + 占位角色 + Galgame 对话框）。 */
@@ -164,6 +213,20 @@ export function defaultScene() {
         rotation: 0, opacity: 1, z: 23, locked: false, hidden: false,
         background: 'transparent', borderColor: 'rgba(255,255,255,.35)', borderWidth: 1, borderRadius: 4,
         color: '#e8ebf5', fontSize: 12, text: '设置', action: 'settings',
+      },
+      {
+        id: 'btn-save', type: 'action-button', name: '保存按钮',
+        x: 740, y: 48, w: 44, h: 26,
+        rotation: 0, opacity: 1, z: 23, locked: false, hidden: false,
+        background: 'transparent', borderColor: 'transparent', borderWidth: 0, borderRadius: 0,
+        color: '#e8ebf5', fontSize: 12, text: '', action: 'save',
+      },
+      {
+        id: 'btn-load', type: 'action-button', name: '读取按钮',
+        x: 792, y: 48, w: 44, h: 26,
+        rotation: 0, opacity: 1, z: 23, locked: false, hidden: false,
+        background: 'transparent', borderColor: 'transparent', borderWidth: 0, borderRadius: 0,
+        color: '#e8ebf5', fontSize: 12, text: '', action: 'load',
       },
       {
         id: 'deco-corner', type: 'decoration', name: '装饰 · 菱形',
@@ -321,6 +384,9 @@ export function normalizeSettings(raw) {
     welcome: Array.isArray(raw.welcome)
       ? raw.welcome.filter(line => typeof line === 'string').slice(0, 8)
       : base.welcome,
+    persona: normalizePersona(raw.persona),
+    pendingStyle: normalizePendingStyle(raw.pendingStyle),
+    autoSaveEvery: Math.min(100, Math.max(0, Math.round(toNumber(raw.autoSaveEvery, base.autoSaveEvery)))),
   }
 }
 
@@ -435,27 +501,70 @@ export function ensureSpeakerNames(scene) {
 }
 
 /**
- * 迁移：旧场景缺透明功能按钮时，补「历史/自动/快进/设置」四个预设按钮
- * （舞台右上角一排；幂等）。用户可自由删除/移动/改绑定。
+ * 迁移：按 id 逐项补齐六个预设功能按钮（历史/自动/快进/设置/保存/读取；幂等）。
+ * 「保存/读取」优先放在「历史按钮」正下方一行（历史右移）；无历史按钮时退回
+ * 右上角默认排布（保存/读取换行）。用户可自由删除/移动/改绑定。
  */
 export function ensureActionButtons(scene) {
-  if (scene.elements.some(el => el.type === 'action-button')) return scene
   if (!scene.elements.some(el => el.type === 'dialogue')) return scene
   const sw = scene.settings.stageW
-  const actions = [
+  const has = new Set(scene.elements.filter(el => el.type === 'action-button').map(el => el.id))
+  const historyEl = scene.elements.find(el => el.id === 'btn-history')
+  const order = { 'btn-history': 0, 'btn-auto': 1, 'btn-skip': 2, 'btn-settings': 3, 'btn-save': 4, 'btn-load': 5 }
+  const presets = [
     { id: 'btn-history', text: '历史', action: 'history' },
     { id: 'btn-auto', text: '自动', action: 'auto' },
     { id: 'btn-skip', text: '快进', action: 'skip' },
     { id: 'btn-settings', text: '设置', action: 'settings' },
+    { id: 'btn-save', text: '', action: 'save' },
+    { id: 'btn-load', text: '', action: 'load' },
   ]
-  const add = actions.map((entry, index) => ({
-    ...makeElement('action-button', { id: entry.id }),
-    x: sw - 220 + index * 52,
-    y: 14,
-    text: entry.text,
-    action: entry.action,
-    name: entry.text + '按钮',
-  }))
-  return { ...scene, elements: [...scene.elements, ...add] }
+  const add = []
+  for (const entry of presets) {
+    if (has.has(entry.id)) continue
+    const el = {
+      ...makeElement('action-button', { id: entry.id }),
+      text: entry.text,
+      action: entry.action,
+      name: entry.text + '按钮',
+      // 保存/读取默认无边框（与用户预设一致）。
+      ...(entry.id === 'btn-save' || entry.id === 'btn-load'
+        ? { borderColor: 'transparent', borderWidth: 0 }
+        : {}),
+    }
+    if ((entry.id === 'btn-save' || entry.id === 'btn-load') && historyEl !== undefined) {
+      el.x = entry.id === 'btn-save' ? historyEl.x : historyEl.x + historyEl.w + 8
+      el.y = historyEl.y + historyEl.h + 8
+    } else {
+      const index = order[entry.id]
+      el.x = sw - 220 + index * 52
+      el.y = index >= 4 ? 48 : 14
+    }
+    add.push(el)
+  }
+  return add.length > 0 ? { ...scene, elements: [...scene.elements, ...add] } : scene
+}
+
+/**
+ * 迁移：旧版自动补位的「保存/读取」按钮（历史按钮正下方一行）归位到标准底排
+ * （与预设一致：1920×1080 场景 → 保存 (1304,1036,116,44)、读取 (1425,1036,116,44)）。
+ * 仅当两个按钮都处于「正下方补位」形态且舞台为 1920×1080 时移动；用户自定义排布不动。
+ */
+export function ensureSaveButtonLayout(scene) {
+  if (scene.settings.stageW !== 1920 || scene.settings.stageH !== 1080) return scene
+  const history = scene.elements.find(el => el.id === 'btn-history')
+  const save = scene.elements.find(el => el.id === 'btn-save')
+  const load = scene.elements.find(el => el.id === 'btn-load')
+  if (history === undefined || save === undefined || load === undefined) return scene
+  const expectedY = history.y + history.h + 8
+  const legacySave = save.y === expectedY && save.x === history.x
+  const legacyLoad = load.y === expectedY && load.x === history.x + history.w + 8
+  if (!legacySave || !legacyLoad) return scene
+  const elements = scene.elements.map(el => {
+    if (el.id === 'btn-save') return { ...el, x: 1304, y: 1036, w: 116, h: 44 }
+    if (el.id === 'btn-load') return { ...el, x: 1425, y: 1036, w: 116, h: 44 }
+    return el
+  })
+  return { ...scene, elements }
 }
 

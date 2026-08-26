@@ -1,2 +1,12 @@
+# 依赖与本地环境
 node_modules/
+.npm-cache/
+
+# 本地路径记录(含个人信息,严禁提交)
+GAL-UPDATE-NOTES.md
+
+# 日志与临时文件
 *.log
+*.tmp
+.DS_Store
+Thumbs.db
