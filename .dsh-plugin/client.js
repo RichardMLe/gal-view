@@ -4148,9 +4148,11 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
       void refresh();
     });
   }, [api, refresh]);
+  const busyRef = (0, import_react4.useRef)(busy);
+  busyRef.current = busy;
   (0, import_react4.useEffect)(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && busyRef.current !== true) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -4181,7 +4183,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setError(null);
     setNotice(null);
     try {
-      setNotice("\u6B63\u5728\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u5E76\u6574\u7406\u8BB0\u5F55\u2026");
+      setNotice("\u6B63\u5728\u5B58\u6863\uFF1A\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u3001\u5BFC\u51FA\u5B8C\u6574\u65E5\u5FD7\u2026\uFF08\u8BF7\u52FF\u7EE7\u7EED\u5BF9\u8BDD\uFF09");
       const result = await onRequestSave();
       setNotice(result !== null && result.fallback === true ? "\u5DF2\u4E0B\u8F7D\u5B58\u6863\u6587\u4EF6\uFF08\u6B64\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5939\u5199\u5165\uFF0C\u8BF7\u628A\u6587\u4EF6\u653E\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF09" : "\u5DF2\u521B\u5EFA\u5B58\u6863\u300C" + result.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
       await refresh();
@@ -4285,7 +4287,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     ), /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-time" }, formatTime(s.updatedAt)), isAuto && /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-badge" }, "\u81EA\u52A8"), mode === "load" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy || running === true, onClick: () => loadLegacy(s.id) }, "\u8BFB\u53D6"));
   });
   const hasLegacy = legacy.saves.length > 0 || legacy.autos.length > 0;
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirReady ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u5DE5\u7A0B\u76EE\u5F55 \\.gal-view-saves" : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u9009\u62E9\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09", brokenCount > 0 ? " \xB7 " + brokenCount + " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirReady ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u628A\u5F53\u524D\u5BF9\u8BDD\u8BB0\u5F55\u5199\u6210\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\u91CC\u7684\u6587\u4EF6\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09\uFF1B\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u6309\u5B58\u6863\u70B9\u5207\u51FA\u65B0\u4E16\u754C\u7EBF\u7EE7\u7EED\uFF08\u6D4B\u8BD5\u671F\u65E7\u4E16\u754C\u7EBF\u4FDD\u7559\uFF0C\u4E0D\u9500\u6BC1\uFF09\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF0C\u517C\u5BB9\u8BFB\u53D6\uFF09"), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
+  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirReady ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u5DE5\u7A0B\u76EE\u5F55 \\.gal-view-saves" : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u9009\u62E9\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09", brokenCount > 0 ? " \xB7 " + brokenCount + " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirReady ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u628A\u5F53\u524D\u5BF9\u8BDD\u5B8C\u6574\u590D\u5236\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF1A\u5B98\u65B9\u5B8C\u6574\u65E5\u5FD7 zip + \u53EF\u8BFB\u8BB0\u5F55 md\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09\uFF1B\u5B58\u6863\u671F\u95F4\u8BF7\u52FF\u7EE7\u7EED\u5BF9\u8BDD\uFF0C\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u6309\u5B58\u6863\u70B9\u5207\u51FA\u65B0\u4E16\u754C\u7EBF\u7EE7\u7EED\uFF08\u6D4B\u8BD5\u671F\u65E7\u4E16\u754C\u7EBF\u4FDD\u7559\uFF0C\u4E0D\u9500\u6BC1\uFF09\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF0C\u517C\u5BB9\u8BFB\u53D6\uFF09"), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false)), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
 }
 function loadSaveIndex(api) {
   try {
@@ -4337,6 +4339,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   const fonts = useFonts((f) => f);
   const readState = useStore((s) => s);
   const nodes = useSession((s) => s.nodes);
+  const hasMore = useSession((s) => s.hasMore);
   const partial = useSession((s) => s.partial);
   const running = useSession((s) => s.running);
   const blank = useSession((s) => s.blank);
@@ -4397,26 +4400,13 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   }, [api]);
   const nodesRef = (0, import_react4.useRef)(nodes);
   nodesRef.current = nodes;
-  const captureRecord = (0, import_react4.useCallback)(async () => {
+  const hasMoreRef = (0, import_react4.useRef)(false);
+  hasMoreRef.current = hasMore === true;
+  const turnsRef = (0, import_react4.useRef)(0);
+  turnsRef.current = turns;
+  const readRecord = (0, import_react4.useCallback)(() => {
     const sessionIdValue = typeof api?.currentSessionId === "function" ? api.currentSessionId() : null;
     if (sessionIdValue === null) return null;
-    if (typeof api?.pageFullHistory === "function") {
-      try {
-        await api.pageFullHistory();
-      } catch (cause) {
-        console.warn("[gal-view:save] \u5386\u53F2\u56DE\u62C9\u5931\u8D25:", cause);
-      }
-      let stable = 0;
-      let prevLen = -1;
-      for (let i = 0; i < 20; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0;
-        if (len === prevLen) stable += 1;
-        else stable = 0;
-        prevLen = len;
-        if (stable >= 2) break;
-      }
-    }
     const list = Array.isArray(nodesRef.current) ? nodesRef.current : [];
     const recLines = nodesToLines(list);
     const lastNode = list[list.length - 1];
@@ -4426,9 +4416,88 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       assistantName: assistantDisplayName(scene),
       lines: recLines,
       turns: recLines.filter((l) => l.kind === "player").length,
-      atSeq: lastNode !== void 0 && typeof lastNode.seq === "number" ? lastNode.seq : null
+      atSeq: lastNode !== void 0 && typeof lastNode.seq === "number" ? lastNode.seq : null,
+      complete: hasMoreRef.current !== true
     };
   }, [api, scene]);
+  const waitNodesStable = (0, import_react4.useCallback)(async () => {
+    let stable = 0;
+    let prevLen = -1;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0;
+      if (len === prevLen) stable += 1;
+      else stable = 0;
+      prevLen = len;
+      if (stable >= 2) break;
+    }
+  }, []);
+  const saveMutexRef = (0, import_react4.useRef)(false);
+  const performSave = (0, import_react4.useCallback)(async (auto2) => {
+    if (saveMutexRef.current) return { ok: false, reason: "busy" };
+    saveMutexRef.current = true;
+    try {
+      const rec = readRecord();
+      if (rec === null) return { ok: false, reason: "no-session" };
+      if (rec.atSeq === null) return { ok: false, reason: "empty" };
+      const guard = { sessionId: rec.sessionId, turns: turnsRef.current };
+      let zip = null;
+      let exportNote = "";
+      try {
+        if (typeof api?.exportSessionLog === "function") zip = await api.exportSessionLog(rec.sessionId);
+        else throw new Error("\u4E0D\u652F\u6301\u5BFC\u51FA\u63A5\u53E3");
+      } catch (cause) {
+        console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", cause);
+        exportNote = "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
+      }
+      if (zip === null && rec.complete !== true && typeof api?.pageFullHistory === "function") {
+        try {
+          await api.pageFullHistory();
+          await waitNodesStable();
+          const rec2 = readRecord();
+          if (rec2 !== null) {
+            rec.lines = rec2.lines;
+            rec.turns = rec2.turns;
+            rec.atSeq = rec2.atSeq ?? rec.atSeq;
+            rec.complete = true;
+          }
+          exportNote = "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u5DF2\u56DE\u62C9\u5B8C\u6574\u5386\u53F2\u8F6C\u5F55";
+        } catch (cause) {
+          console.warn("[gal-view:save] \u5B8C\u6574\u5386\u53F2\u56DE\u62C9\u5931\u8D25:", cause);
+          throw new Error("\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u4E0E\u5B8C\u6574\u56DE\u62C9\u5747\u5931\u8D25,\u5B58\u6863\u4E2D\u6B62:" + (cause?.message ?? String(cause)));
+        } finally {
+          if (runningRef.current === false && typeof api?.shrinkWindowBack === "function") {
+            try {
+              await api.shrinkWindowBack();
+            } catch {
+            }
+          }
+        }
+      } else if (zip === null) {
+        exportNote = "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55(\u7A97\u53E3\u5DF2\u542B\u5168\u90E8\u5386\u53F2)";
+      }
+      const nowId = typeof api?.currentSessionId === "function" ? api.currentSessionId() : null;
+      if (nowId !== guard.sessionId || turnsRef.current !== guard.turns) {
+        console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guard, "\u2192", { sessionId: nowId, turns: turnsRef.current });
+        return { ok: false, reason: "interfered" };
+      }
+      const result = await api.saveSlotFile({
+        auto: auto2,
+        rootTitle: rec.rootTitle,
+        sessionId: rec.sessionId,
+        atSeq: rec.atSeq,
+        assistantName: rec.assistantName,
+        turns: rec.turns,
+        lines: rec.lines,
+        complete: rec.complete === true,
+        zip,
+        exportNote
+      });
+      return { ok: true, ...result };
+    } finally {
+      saveMutexRef.current = false;
+    }
+  }, [api, readRecord, waitNodesStable]);
   (0, import_react4.useEffect)(() => {
     const ref = autoSaveRef.current;
     if (autoSaveEvery <= 0 || ref.saving || ref.trying) return;
@@ -4452,21 +4521,12 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       }
       r.saving = true;
       try {
-        const rec = await captureRecord();
-        if (rec === null || rec.atSeq === null) {
-          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u5C1A\u65E0\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u8DF3\u8FC7");
+        const result = await performSave(true);
+        if (!result.ok) {
+          console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u8DF3\u8FC7:", result.reason);
           r.saving = false;
           return;
         }
-        await api.saveSlotFile({
-          auto: true,
-          rootTitle: rec.rootTitle,
-          sessionId: rec.sessionId,
-          atSeq: rec.atSeq,
-          assistantName: rec.assistantName,
-          turns: rec.turns,
-          lines: rec.lines
-        });
         r.baseline = currentTurns;
         try {
           window.localStorage.setItem(autoKey, String(r.baseline));
@@ -4478,7 +4538,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       }
       r.saving = false;
     });
-  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, captureRecord]);
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, performSave]);
   const nodesCount = Array.isArray(nodes) ? nodes.length : 0;
   const nodesWatchRef = (0, import_react4.useRef)({ count: null, session: null, last: 0 });
   (0, import_react4.useEffect)(() => {
@@ -4732,25 +4792,23 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   }, [running, type.done, hasNextPage, pageIndex, skipTyping]);
   const send = useSend(inputActions, draft, () => setSharedDraft(""));
   const requestSave = (0, import_react4.useCallback)(async () => {
+    if (Array.isArray(pending) && pending.length > 0) throw new Error("\u8BF7\u5148\u5904\u7406\u5B8C\u5F53\u524D\u7684\u95EE\u9898\uFF08\u6279\u51C6/\u56DE\u7B54\uFF09\u518D\u5B58\u6863");
     const hasSvc = typeof api?.hasSessionsService === "function" ? api.hasSessionsService() : false;
     if (hasSvc && typeof api?.waitSettled === "function") {
       const gate = await api.waitSettled({ quietMs: 1500, timeoutMs: 15e3 });
       if (!gate.settled) throw new Error("\u56DE\u590D\u5C1A\u672A\u5B8C\u5168\u843D\u5B9A\uFF0C\u8BF7\u7A0D\u540E\u518D\u5B58\u6863");
     }
     if (typeof api?.saveSlotFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5B58\u6863");
-    const rec = await captureRecord();
-    if (rec === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
-    if (rec.atSeq === null) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD\uFF0C\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
-    return api.saveSlotFile({
-      auto: false,
-      rootTitle: rec.rootTitle,
-      sessionId: rec.sessionId,
-      atSeq: rec.atSeq,
-      assistantName: rec.assistantName,
-      turns: rec.turns,
-      lines: rec.lines
-    });
-  }, [api, captureRecord]);
+    const result = await performSave(false);
+    if (!result.ok) {
+      if (result.reason === "busy") throw new Error("\u5DF2\u6709\u5B58\u6863\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u5019\u518D\u8BD5");
+      if (result.reason === "interfered") throw new Error("\u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u4E86\u53D8\u5316\uFF0C\u5DF2\u53D6\u6D88\u672C\u6B21\u5B58\u6863\uFF0C\u8BF7\u91CD\u8BD5");
+      if (result.reason === "empty") throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD\uFF0C\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
+      if (result.reason === "no-session") throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      throw new Error("\u5B58\u6863\u5931\u8D25\uFF1A" + String(result.reason ?? "\u672A\u77E5\u539F\u56E0"));
+    }
+    return result;
+  }, [api, pending, performSave]);
   const requestLoad = (0, import_react4.useCallback)(async (id) => {
     if (typeof api?.loadSaveFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u8BFB\u6863");
     return api.loadSaveFile(id);
@@ -5093,6 +5151,10 @@ function buildSaveDoc(doc) {
   const savedAtText = formatTime2(meta.savedAt);
   body.push("");
   body.push("> \u5B58\u6863\u65F6\u95F4:" + (savedAtText === "" ? "\u672A\u77E5" : savedAtText) + " \xB7 \u4E3B\u7EBF\u7A0B:" + (meta.rootTitle === "" ? "\u672A\u77E5" : meta.rootTitle) + " \xB7 \u56DE\u5408\u6570:" + meta.turns + " \xB7 \u7C7B\u578B:" + (meta.auto ? "\u81EA\u52A8\u5B58\u6863" : "\u624B\u52A8\u5B58\u6863"));
+  if (typeof doc.note === "string" && doc.note.trim() !== "") {
+    body.push("");
+    body.push("> \u8BF4\u660E:" + doc.note.trim());
+  }
   body.push("");
   body.push("## \u5BF9\u8BDD\u8BB0\u5F55");
   body.push("");
@@ -5339,6 +5401,31 @@ async function readSaveFile(dir, name2) {
 async function removeSaveFile(dir, name2) {
   try {
     await dir.removeEntry(name2);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function writeSaveZip(dir, name2, bytes) {
+  const safeName = String(name2).replace(/[\\/:*?"<>|]/g, "_");
+  try {
+    const handle = await dir.getFileHandle(safeName, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(bytes);
+    await writable.close();
+  } catch (error) {
+    throw new Error("\u5199\u5165\u65E5\u5FD7\u5907\u4EFD\u5931\u8D25:" + (error?.message ?? String(error)));
+  }
+}
+function downloadBlobFile(name2, bytes, type) {
+  try {
+    const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name2;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4e3);
     return true;
   } catch {
     return false;
@@ -5776,8 +5863,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let rootTitle = reg.rootTitle;
       if (current2 !== null) {
         const byId = snapshot?.byId ?? {};
-        const chained = this.rootTitleOf(current2, byId);
-        if (chained !== "" && !isSlotTitle(chained)) rootTitle = chained;
+        const own = byId?.[current2]?.title;
+        if (typeof own === "string" && own !== "" && !isSlotTitle(own)) {
+          rootTitle = own;
+        } else {
+          const chained = this.rootTitleOf(current2, byId);
+          if (chained !== "" && !isSlotTitle(chained)) rootTitle = chained;
+        }
       }
       return { rootId: current2, rootTitle, saves: reg.saves, autos: reg.autos };
     },
@@ -5896,14 +5988,21 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       return { id: slotId, title: value };
     },
-    /** 主线程标题：注册表优先，缺失时沿当前会话父链解析（链缺失回退当前会话标题）。 */
+    /** 主线程标题：当前会话自身标题优先(用户改名立即生效,读档新线沿用新名),
+     * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。 */
     mainTitle() {
-      const reg = this.readSlotsRegistry();
-      if (reg.rootTitle !== "") return reg.rootTitle;
       const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null;
       const current2 = sessionOf(snapshot);
-      if (current2 === null) return "";
-      return this.rootTitleOf(current2, snapshot?.byId ?? {});
+      if (current2 !== null) {
+        const byId = snapshot?.byId ?? {};
+        const own = byId?.[current2]?.title;
+        if (typeof own === "string" && own !== "" && !isSlotTitle(own)) return own;
+        const chained = this.rootTitleOf(current2, byId);
+        if (chained !== "" && !isSlotTitle(chained)) return chained;
+      }
+      const reg = this.readSlotsRegistry();
+      if (reg.rootTitle !== "") return reg.rootTitle;
+      return "";
     },
     /** SAVE（手动）：创建快照槽 xx-saveN；不切换。 */
     async saveSlot() {
@@ -5990,7 +6089,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const broken = [];
       if (dir === null) return { ready: false, rootTitle: "", saves, autos, broken };
       const names = await listSaveFiles(dir);
+      const mdNames = /* @__PURE__ */ new Set();
       for (const name2 of names) {
+        if (name2.toLowerCase().endsWith(".zip")) continue;
         const id = slotIdFromFileName(name2);
         if (id === "") continue;
         const text = await readSaveFile(dir, name2);
@@ -6003,6 +6104,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           broken.push(name2);
           continue;
         }
+        mdNames.add(name2);
         const entry = {
           id,
           name: name2,
@@ -6014,38 +6116,63 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         if (doc.meta.auto) autos.push(entry);
         else saves.push(entry);
       }
+      for (const name2 of names) {
+        if (!name2.toLowerCase().endsWith(".zip")) continue;
+        const id = slotIdFromFileName(name2);
+        if (id !== "" && !mdNames.has(id + ".md")) broken.push(name2 + "(\u5B64\u7ACB\u65E5\u5FD7)");
+      }
       saves.sort((a, b) => a.id.localeCompare(b.id, "zh-Hans-CN", { numeric: true }));
       autos.sort((a, b) => a.id.localeCompare(b.id, "zh-Hans-CN", { numeric: true }));
       const mainTitle = this.mainTitle();
       return { ready: true, rootTitle: mainTitle, saves, autos, broken };
     },
     /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
-     * payload: { title, auto, rootTitle, sessionId, atSeq, assistantName, turns, lines } */
+     * payload: { auto, rootTitle, sessionId, atSeq, assistantName, turns, lines,
+     *            complete, zip(Uint8Array|null), exportNote }
+     * 写入顺序:先 zip(官方完整日志),再 md(可读记录+元数据);md 失败回滚 zip。
+     * 自动档仅保留最新:新档全部成功后清理旧自动档的 md+zip。 */
     async saveSlotFile(payload) {
-      const dir = await resolveSaveDir();
-      if (dir === null) {
-        const text2 = buildSaveDoc(payload);
-        const name3 = String(payload.title ?? "gal-save") + ".md";
-        if (downloadTextFile(name3, text2)) {
-          return { id: name3, title: payload.title, fallback: true };
-        }
-        throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939(\u70B9\u51FB\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D\u6388\u6743\u4E00\u6B21)");
-      }
       if (payload.atSeq === null || payload.atSeq === void 0) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
-      const existing = await listSaveFiles(dir);
+      const dir = await resolveSaveDir();
+      const existing = dir !== null ? await listSaveFiles(dir) : [];
       const ids = existing.map(slotIdFromFileName).filter((id2) => id2 !== "");
       const prefix = fileSlotPrefix(payload.rootTitle);
       const id = nextFileSlotId(prefix, ids, payload.auto === true);
       const title = typeof payload.title === "string" && payload.title !== "" ? payload.title : id;
       const name2 = id + ".md";
-      const text = buildSaveDoc({ ...payload, title });
-      await writeSaveFile(dir, name2, text);
-      console.info("[gal-view:save] \u5B58\u6863\u6587\u4EF6\u5199\u5165:", name2, "(atSeq=" + payload.atSeq + ")");
+      const zipName = id + ".zip";
+      const hasZip = payload.zip !== null && payload.zip !== void 0 && payload.zip !== "";
+      const note = (typeof payload.exportNote === "string" && payload.exportNote !== "" ? payload.exportNote + "\u3002" : "") + (hasZip ? "" : "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u4E0D\u53EF\u7528,\u5B8C\u6574\u8BB0\u5F55\u4EE5\u6587\u672C\u8F6C\u5F55\u4E3A\u51C6\u3002");
+      const text = buildSaveDoc({ ...payload, title, note: note === "" ? void 0 : note });
+      if (dir === null) {
+        let ok = true;
+        if (hasZip) ok = downloadBlobFile(zipName, payload.zip, "application/zip") && ok;
+        ok = downloadTextFile(name2, text) && ok;
+        if (!ok) throw new Error("\u4E0B\u8F7D\u5B58\u6863\u5931\u8D25(\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6587\u4EF6\u5199\u5165)");
+        return { id, name: name2, title, fallback: true };
+      }
+      if (hasZip) {
+        await writeSaveZip(dir, zipName, payload.zip);
+        console.info("[gal-view:save] \u65E5\u5FD7\u5907\u4EFD\u5199\u5165:", zipName);
+      }
+      try {
+        await writeSaveFile(dir, name2, text);
+      } catch (cause) {
+        if (hasZip) {
+          try {
+            await removeSaveFile(dir, zipName);
+          } catch {
+          }
+        }
+        throw cause;
+      }
+      console.info("[gal-view:save] \u5B58\u6863\u6587\u4EF6\u5199\u5165:", name2, "(atSeq=" + payload.atSeq + ", \u5B8C\u6574\u65E5\u5FD7=" + String(hasZip) + ")");
       if (payload.auto === true) {
         for (const oldName of existing) {
           const slot = slotFromFileName(oldName, prefix);
           if (slot !== null && slot.auto && slot.id !== id) {
             await removeSaveFile(dir, oldName);
+            await removeSaveFile(dir, slot.id + ".zip");
             console.info("[gal-view:save] \u6E05\u7406\u65E7\u81EA\u52A8\u6863\u6587\u4EF6:", oldName);
           }
         }
@@ -6118,11 +6245,15 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const dir = await resolveSaveDir();
       if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
       const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
+      const zipName = slotIdFromFileName(name2) + ".zip";
       const removed = await removeSaveFile(dir, name2);
+      await removeSaveFile(dir, zipName);
       console.info("[gal-view:save] \u5220\u9664\u5B58\u6863\u6587\u4EF6:", name2, "->", String(removed));
       return removed;
     },
-    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。 */
+    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。
+     * 仅作为官方导出失败时的兜底;采集后必须调用 shrinkWindowBack 收缩窗口,
+     * 否则官方视图会渲染全部历史行导致界面卡死。 */
     async pageFullHistory() {
       const id = this.currentSessionId();
       if (id === null) return;
@@ -6139,6 +6270,47 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       }
       if (guard >= 60) console.warn("[gal-view:save] \u5386\u53F2\u56DE\u62C9\u8FBE\u5230\u4E0A\u9650,\u8BB0\u5F55\u53EF\u80FD\u4E0D\u5B8C\u6574(\u524D 3000 \u6761\u5185)");
+    },
+    /** 窗口收缩:官方重连同款 resync,重置窗口并重拉尾部页。
+     * 用于回拉完整历史后的恢复;运行中/有待处理交互时禁止调用(调用方保证)。 */
+    async shrinkWindowBack() {
+      const id = this.currentSessionId();
+      if (id === null) return false;
+      const session = sessionsSvc?.binding?.(id)?.session ?? null;
+      if (session === null) return false;
+      try {
+        if (typeof session.resync === "function") {
+          await session.resync();
+          return true;
+        }
+        if (typeof session.open === "function") {
+          await session.open();
+          return true;
+        }
+      } catch (cause) {
+        console.warn("[gal-view:save] \u7A97\u53E3\u6536\u7F29\u5931\u8D25:", cause);
+      }
+      return false;
+    },
+    /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
+     * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
+    async exportSessionLog(sessionId2) {
+      if (typeof fetch !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u7F51\u7EDC\u8BF7\u6C42");
+      const base = typeof window !== "undefined" && typeof window.location === "object" && window.location !== null && typeof window.location.origin === "string" && window.location.origin !== "" && window.location.origin !== "null" ? window.location.origin : "http://dsh.internal";
+      const url = new URL("/api/session.export", base);
+      url.searchParams.set("sessionId", String(sessionId2));
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = setTimeout(() => {
+        controller?.abort();
+      }, 6e4);
+      try {
+        const response = await fetch(url.toString(), { method: "GET", signal: controller?.signal ?? void 0 });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const buffer = await response.arrayBuffer();
+        return new Uint8Array(buffer);
+      } finally {
+        clearTimeout(timer);
+      }
     }
   };
 }

@@ -247,6 +247,43 @@ try {
   await registeredApi.deleteSlotFile(detached.id)
   console.log('worldline-detached ok')
 
+  // —— zip 双文件:带官方日志 zip 的存档 → md+zip 成对写入;删除成对删除 ——
+  const withZip = await registeredApi.saveSlotFile({
+    auto: false, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 2,
+    lines: [{ kind: 'player', text: 'z' }], complete: true, zip: new Uint8Array([1, 2, 3]), exportNote: '',
+  })
+  if (withZip.id !== '深海脑-save1') { console.error('FAIL zip save id: ' + JSON.stringify(withZip)); process.exit(1) }
+  if (!fakeFiles.has('深海脑-save1.md') || !fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip+md pair not written'); process.exit(1) }
+  const withZipRemoved = await registeredApi.deleteSlotFile(withZip.id)
+  if (!withZipRemoved || fakeFiles.has('深海脑-save1.md') || fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip pair delete'); process.exit(1) }
+  console.log('zip pair ok')
+
+  // —— 孤儿 zip:只有 zip 没有 md → 计入无法识别 ——
+  fakeFiles.set('深海脑-save99.zip', { kind: 'file', content: 'PK' })
+  const orphanList = await registeredApi.listFileSlots()
+  if (!orphanList.broken.some(b => String(b).includes('深海脑-save99.zip'))) { console.error('FAIL orphan zip not flagged: ' + JSON.stringify(orphanList.broken)); process.exit(1) }
+  fakeFiles.delete('深海脑-save99.zip')
+  console.log('orphan zip ok')
+
+  // —— 导出接口:无 fetch 环境应明确报错(调用方走兜底) ——
+  let exportThrew = false
+  try { await registeredApi.exportSessionLog('s-root') } catch { exportThrew = true }
+  if (!exportThrew) { console.error('FAIL exportSessionLog should throw without fetch'); process.exit(1) }
+  console.log('exportSessionLog fallback ok')
+
+  // —— 改名修复(方案 C):当前会话自身标题优先 ——
+  const renameSave = await registeredApi.saveSlotFile({
+    auto: false, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 2,
+    lines: [{ kind: 'player', text: '改名前存档' }], complete: true,
+  })
+  listCurrent = 's-root'
+  listById['s-root'].title = '新名字探案'
+  if (registeredApi.mainTitle() !== '新名字探案') { console.error('FAIL mainTitle own-title: ' + registeredApi.mainTitle()); process.exit(1) }
+  const renamedLoad = await registeredApi.loadSaveFile(renameSave.id)
+  const lastRename = renameCalls[renameCalls.length - 1]
+  if (renamedLoad.mode !== 'fork' || lastRename?.[1] !== '新名字探案') { console.error('FAIL load rename to new title: ' + JSON.stringify(lastRename)); process.exit(1) }
+  console.log('rename fix ok')
+
   if (registeredApi.hasSessionsService() !== true) { console.error('FAIL hasSessionsService'); process.exit(1) }
   console.log('ALL OK')
 } catch (error) {

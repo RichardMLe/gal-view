@@ -155,6 +155,35 @@ export async function removeSaveFile(dir, name) {
   }
 }
 
+/** 写入二进制文件(官方会话日志 zip;Uint8Array/Blob)。 */
+export async function writeSaveZip(dir, name, bytes) {
+  const safeName = String(name).replace(/[\\/:*?"<>|]/g, '_')
+  try {
+    const handle = await dir.getFileHandle(safeName, { create: true })
+    const writable = await handle.createWritable()
+    await writable.write(bytes)
+    await writable.close()
+  } catch (error) {
+    throw new Error('写入日志备份失败:' + (error?.message ?? String(error)))
+  }
+}
+
+/** 降级:浏览器下载二进制(不支持 FS Access API 时)。 */
+export function downloadBlobFile(name, bytes, type) {
+  try {
+    const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = name
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 4000)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 降级:浏览器下载(不支持 FS Access API 时)。 */
 export function downloadTextFile(name, text) {
   try {

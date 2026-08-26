@@ -74,6 +74,10 @@ export function buildSaveDoc(doc) {
     + ' · 主线程:' + (meta.rootTitle === '' ? '未知' : meta.rootTitle)
     + ' · 回合数:' + meta.turns
     + ' · 类型:' + (meta.auto ? '自动存档' : '手动存档'))
+  if (typeof doc.note === 'string' && doc.note.trim() !== '') {
+    body.push('')
+    body.push('> 说明:' + doc.note.trim())
+  }
   body.push('')
   body.push('## 对话记录')
   body.push('')

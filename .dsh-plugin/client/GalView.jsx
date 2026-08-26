@@ -161,8 +161,11 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     if (typeof api?.onSessions !== 'function') return
     return api.onSessions(() => { void refresh() })
   }, [api, refresh])
+  const busyRef = useRef(busy)
+  busyRef.current = busy
   useEffect(() => {
-    const onKey = e => { if (e.key === 'Escape') onClose() }
+    // 存档进行中忽略 Escape:手动存档必须完整结束后才能继续对话。
+    const onKey = e => { if (e.key === 'Escape' && busyRef.current !== true) onClose() }
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('keydown', onKey) }
   }, [onClose])
@@ -190,7 +193,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setError(null)
     setNotice(null)
     try {
-      setNotice('正在等待回合落定并整理记录…')
+      setNotice('正在存档：等待回合落定、导出完整日志…（请勿继续对话）')
       const result = await onRequestSave()
       setNotice(result !== null && result.fallback === true
         ? '已下载存档文件（此环境不支持文件夹写入，请把文件放进工程 .gal-view-saves 文件夹）'
@@ -313,7 +316,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
       <div className="gv-saves">
         <div className="gv-saves-head">
           <span>{mode === 'save' ? '存档' : '读档'}</span>
-          <button type="button" className="gv-btn" onClick={onClose}>关闭</button>
+          <button type="button" className="gv-btn" disabled={busy} onClick={onClose}>关闭</button>
         </div>
         <div className="gv-saves-dir">
           <span className="gv-saves-dir-label">
@@ -325,7 +328,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
           </button>
         </div>
         {mode === 'save'
-          ? <p className="gv-saves-hint">存档 = 把当前对话记录写成工程 .gal-view-saves 文件夹里的文件（永久保存，读档不会改变它）；读档按存档点还原多轮对话。</p>
+          ? <p className="gv-saves-hint">存档 = 把当前对话完整复制进工程 .gal-view-saves 文件夹：官方完整日志 zip + 可读记录 md（永久保存，读档不会改变它）；存档期间请勿继续对话，读档按存档点还原多轮对话。</p>
           : <p className="gv-saves-hint">读取存档 = 按存档点切出新世界线继续（测试期旧世界线保留，不销毁）。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
         <div className="gv-saves-list">
           <div className="gv-saves-group">自动存档（文件）</div>
@@ -430,6 +433,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const fonts = useFonts(f => f)
   const readState = useStore(s => s)
   const nodes = useSession(s => s.nodes)
+  const hasMore = useSession(s => s.hasMore)
   const partial = useSession(s => s.partial)
   const running = useSession(s => s.running)
   const blank = useSession(s => s.blank)
@@ -504,30 +508,18 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     if (typeof api?.onSessions !== 'function') return undefined
     return api.onSessions(() => setSettleTick(t => t + 1))
   }, [api])
-  // 存档采集：把当前会话历史整段回拉进窗口（官方 loadOlder 分页通道），
-  // 再取台词行与存档点 seq。纯读取+写文件，不碰官方会话系统（不 fork）。
+  // ---- 存档采集(纯窗口读取,零回拉)----
+  // 窗口内的已落定台词 + 存档点 seq(最后一个节点)。完整历史不装进窗口——
+  // 官方导出接口(/api/session.export)在后台流式拉取完整日志,界面零增长。
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
-  const captureRecord = useCallback(async () => {
+  const hasMoreRef = useRef(false)
+  hasMoreRef.current = hasMore === true
+  const turnsRef = useRef(0)
+  turnsRef.current = turns
+  const readRecord = useCallback(() => {
     const sessionIdValue = typeof api?.currentSessionId === 'function' ? api.currentSessionId() : null
     if (sessionIdValue === null) return null
-    if (typeof api?.pageFullHistory === 'function') {
-      try { await api.pageFullHistory() } catch (cause) {
-        console.warn('[gal-view:save] 历史回拉失败:', cause)
-      }
-      // 回拉后等 React 把新节点渲染进窗口再读取(nodesRef 在渲染时更新):
-      // 轮询直到节点数连续两次稳定(上限约 1s),避免采集到未回拉前的旧窗口。
-      let stable = 0
-      let prevLen = -1
-      for (let i = 0; i < 20; i++) {
-        await new Promise(resolve => setTimeout(resolve, 50))
-        const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0
-        if (len === prevLen) stable += 1
-        else stable = 0
-        prevLen = len
-        if (stable >= 2) break
-      }
-    }
     const list = Array.isArray(nodesRef.current) ? nodesRef.current : []
     const recLines = nodesToLines(list)
     const lastNode = list[list.length - 1]
@@ -538,9 +530,101 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       lines: recLines,
       turns: recLines.filter(l => l.kind === 'player').length,
       atSeq: lastNode !== undefined && typeof lastNode.seq === 'number' ? lastNode.seq : null,
+      complete: hasMoreRef.current !== true,
     }
   }, [api, scene])
-  // 文件式自动存档：每 autoSaveEvery 回合写一个文件（零官方干预），仅保留最新自动档。
+  /** 回拉后的稳定等待(仅兜底路径用):等 React 把回拉节点渲染进窗口。 */
+  const waitNodesStable = useCallback(async () => {
+    let stable = 0
+    let prevLen = -1
+    for (let i = 0; i < 20; i++) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      const len = Array.isArray(nodesRef.current) ? nodesRef.current.length : 0
+      if (len === prevLen) stable += 1
+      else stable = 0
+      prevLen = len
+      if (stable >= 2) break
+    }
+  }, [])
+  /** 全局存档互斥:自动/手动共享,同时只会有一份存档在跑。 */
+  const saveMutexRef = useRef(false)
+  /**
+   * 执行一次存档(手动/自动共用):
+   * ① 快照窗口记录+存档点;② 后台导出官方完整日志 zip;③ 导出失败且窗口不完整时
+   *   回拉完整历史(resync 收缩回窗口)兜底;④ 一致性守卫:存档期间对话有变化即中止;
+   * ⑤ 写 zip+md(api 内处理回滚/自动档清理)。
+   * 返回 { ok, reason } 或 { ok:true, ...api 结果 }。
+   */
+  const performSave = useCallback(async (auto) => {
+    if (saveMutexRef.current) return { ok: false, reason: 'busy' }
+    saveMutexRef.current = true
+    try {
+      const rec = readRecord()
+      if (rec === null) return { ok: false, reason: 'no-session' }
+      if (rec.atSeq === null) return { ok: false, reason: 'empty' }
+      // 一致性守卫基线:会话 id + 持久回合数(与 turnsRef 同源,避免窗口行数与总回合数天然不等而误报)。
+      const guard = { sessionId: rec.sessionId, turns: turnsRef.current }
+      // ② 官方完整日志(后台流式,不碰窗口)
+      let zip = null
+      let exportNote = ''
+      try {
+        if (typeof api?.exportSessionLog === 'function') zip = await api.exportSessionLog(rec.sessionId)
+        else throw new Error('不支持导出接口')
+      } catch (cause) {
+        console.warn('[gal-view:save] 官方日志导出失败:', cause)
+        exportNote = '官方日志导出失败,记录为文本转录'
+      }
+      // ③ 兜底:导出失败且窗口不完整 → 回拉完整历史再收缩窗口(罕见路径,可能短暂卡顿)
+      if (zip === null && rec.complete !== true && typeof api?.pageFullHistory === 'function') {
+        try {
+          await api.pageFullHistory()
+          await waitNodesStable()
+          const rec2 = readRecord()
+          if (rec2 !== null) {
+            rec.lines = rec2.lines
+            rec.turns = rec2.turns
+            rec.atSeq = rec2.atSeq ?? rec.atSeq
+            rec.complete = true
+          }
+          exportNote = '官方日志导出失败,已回拉完整历史转录'
+        } catch (cause) {
+          console.warn('[gal-view:save] 完整历史回拉失败:', cause)
+          throw new Error('官方日志导出与完整回拉均失败,存档中止:' + (cause?.message ?? String(cause)))
+        } finally {
+          // 只有确认未开始新回复才收缩窗口(resync 会打断运行中的回合)。
+          if (runningRef.current === false && typeof api?.shrinkWindowBack === 'function') {
+            try { await api.shrinkWindowBack() } catch { /* 忽略 */ }
+          }
+        }
+      } else if (zip === null) {
+        // 窗口本就完整(hasMore=false),导出失败也可接受:文本转录即完整记录。
+        exportNote = '官方日志导出失败,记录为文本转录(窗口已含全部历史)'
+      }
+      // ④ 一致性守卫:存档期间有任何新对话/会话切换 → 中止,绝不产出不一致存档。
+      const nowId = typeof api?.currentSessionId === 'function' ? api.currentSessionId() : null
+      if (nowId !== guard.sessionId || turnsRef.current !== guard.turns) {
+        console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guard, '→', { sessionId: nowId, turns: turnsRef.current })
+        return { ok: false, reason: 'interfered' }
+      }
+      // ⑤ 写文件
+      const result = await api.saveSlotFile({
+        auto,
+        rootTitle: rec.rootTitle,
+        sessionId: rec.sessionId,
+        atSeq: rec.atSeq,
+        assistantName: rec.assistantName,
+        turns: rec.turns,
+        lines: rec.lines,
+        complete: rec.complete === true,
+        zip,
+        exportNote,
+      })
+      return { ok: true, ...result }
+    } finally {
+      saveMutexRef.current = false
+    }
+  }, [api, readRecord, waitNodesStable])
+  // 文件式自动存档:每 autoSaveEvery 回合后台执行(纯后台;有干扰/忙则静默跳过)。
   useEffect(() => {
     const ref = autoSaveRef.current
     if (autoSaveEvery <= 0 || ref.saving || ref.trying) return
@@ -550,8 +634,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     const currentTurns = turns
     const currentEvery = autoSaveEvery
     ref.trying = true
-    // 轻量落定闸门：只读+写文件，不再 fork；等待静默是为保证 loadOlder 回拉
-    // 不在流式中进行、记录采集稳定。
+    // 轻量落定闸门:等回合结束+短暂静默(导出在后台,窗口零增长)。
     api.waitSettled({
       quietMs: 1500,
       timeoutMs: 30000,
@@ -566,21 +649,12 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       }
       r.saving = true
       try {
-        const rec = await captureRecord()
-        if (rec === null || rec.atSeq === null) {
-          console.info('[gal-view] 自动存档:尚无已完成的对话,跳过')
+        const result = await performSave(true)
+        if (!result.ok) {
+          console.info('[gal-view] 自动存档跳过:', result.reason)
           r.saving = false
           return
         }
-        await api.saveSlotFile({
-          auto: true,
-          rootTitle: rec.rootTitle,
-          sessionId: rec.sessionId,
-          atSeq: rec.atSeq,
-          assistantName: rec.assistantName,
-          turns: rec.turns,
-          lines: rec.lines,
-        })
         r.baseline = currentTurns
         try { window.localStorage.setItem(autoKey, String(r.baseline)) } catch { /* 忽略 */ }
         console.info('[gal-view] 自动存档完成(间隔 ' + currentEvery + ' 轮)')
@@ -589,7 +663,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       }
       r.saving = false
     })
-  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, captureRecord])
+  }, [turns, autoSaveEvery, running, pending, api, autoKey, settleTick, performSave])
   // 对话行骤降看门狗(仅记录,不干预):同一会话内 nodes 数量骤降(>50%)且非
   // 运行中,说明官方会话窗口被重装成了不完整尾部。只打日志——自动 resync
   // 会与官方合法的尾部页重装(>50 条长对话 repairGap 只保留尾部 50 条)误判,
@@ -943,29 +1017,27 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const send = useSend(inputActions, draft, () => setSharedDraft(''))
 
   // ---- 文件式存档/读档 ----
-  // 手动存档:轻量落定 → 采集记录 → 写文件(api 内零官方干预)。
+  // 手动存档:轻量落定 → 待处理清空 → 执行存档(面板锁定+一致性守卫,见 performSave)。
   const requestSave = useCallback(async () => {
-    // 闸门只在 sessions 服务可用时生效(等待回合结束+短暂静默,保证采集稳定);
-    // 无官方服务的独立环境直接采集(文件存档不依赖官方会话系统)。
+    if (Array.isArray(pending) && pending.length > 0) throw new Error('请先处理完当前的问题（批准/回答）再存档')
+    // 闸门只在 sessions 服务可用时生效(等待回合结束+短暂静默);
+    // 无官方服务的独立环境直接存档(文件存档不依赖官方会话系统)。
     const hasSvc = typeof api?.hasSessionsService === 'function' ? api.hasSessionsService() : false
     if (hasSvc && typeof api?.waitSettled === 'function') {
       const gate = await api.waitSettled({ quietMs: 1500, timeoutMs: 15000 })
       if (!gate.settled) throw new Error('回复尚未完全落定，请稍后再存档')
     }
     if (typeof api?.saveSlotFile !== 'function') throw new Error('当前环境不支持文件存档')
-    const rec = await captureRecord()
-    if (rec === null) throw new Error('未找到当前会话')
-    if (rec.atSeq === null) throw new Error('还没有已完成的对话，先聊两句再存档吧')
-    return api.saveSlotFile({
-      auto: false,
-      rootTitle: rec.rootTitle,
-      sessionId: rec.sessionId,
-      atSeq: rec.atSeq,
-      assistantName: rec.assistantName,
-      turns: rec.turns,
-      lines: rec.lines,
-    })
-  }, [api, captureRecord])
+    const result = await performSave(false)
+    if (!result.ok) {
+      if (result.reason === 'busy') throw new Error('已有存档正在进行，请稍候再试')
+      if (result.reason === 'interfered') throw new Error('存档期间对话发生了变化，已取消本次存档，请重试')
+      if (result.reason === 'empty') throw new Error('还没有已完成的对话，先聊两句再存档吧')
+      if (result.reason === 'no-session') throw new Error('未找到当前会话')
+      throw new Error('存档失败：' + String(result.reason ?? '未知原因'))
+    }
+    return result
+  }, [api, pending, performSave])
   const requestLoad = useCallback(async (id) => {
     if (typeof api?.loadSaveFile !== 'function') throw new Error('当前环境不支持文件读档')
     return api.loadSaveFile(id)

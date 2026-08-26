@@ -100,3 +100,11 @@ test('isAncestorOf:父链判定(相等/后代/反向/断链/缺失)', () => {
   assert.equal(isAncestorOf(byId, '', 'c'), false)
   assert.equal(isAncestorOf({}, 'a', 'c'), false)
 })
+
+test('buildSaveDoc note 说明写入正文,parse 往返不受影响', () => {
+  const doc = buildSaveDoc({ title: 't', sessionId: 's', atSeq: 1, note: '官方日志导出失败', lines: [{ kind: 'player', text: 'a' }] })
+  assert.match(doc, /说明:官方日志导出失败/)
+  const parsed = parseSaveDoc(doc)
+  assert.equal(parsed.lines.length, 1)
+  assert.equal(parsed.lines[0].text, 'a')
+})

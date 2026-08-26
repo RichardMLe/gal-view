@@ -33,6 +33,7 @@ import {
 import {
   fsAccessSupported, pickDirectory, resolveSaveDir, listSaveFiles,
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
+  writeSaveZip, downloadBlobFile,
 } from './fsaccess.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
@@ -471,8 +472,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let rootTitle = reg.rootTitle
       if (current !== null) {
         const byId = snapshot?.byId ?? {}
-        const chained = this.rootTitleOf(current, byId)
-        if (chained !== '' && !isSlotTitle(chained)) rootTitle = chained
+        const own = byId?.[current]?.title
+        if (typeof own === 'string' && own !== '' && !isSlotTitle(own)) {
+          rootTitle = own
+        } else {
+          const chained = this.rootTitleOf(current, byId)
+          if (chained !== '' && !isSlotTitle(chained)) rootTitle = chained
+        }
       }
       return { rootId: current, rootTitle, saves: reg.saves, autos: reg.autos }
     },
@@ -596,14 +602,21 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       return { id: slotId, title: value }
     },
-    /** 主线程标题：注册表优先，缺失时沿当前会话父链解析（链缺失回退当前会话标题）。 */
+    /** 主线程标题：当前会话自身标题优先(用户改名立即生效,读档新线沿用新名),
+     * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。 */
     mainTitle() {
-      const reg = this.readSlotsRegistry()
-      if (reg.rootTitle !== '') return reg.rootTitle
       const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
       const current = sessionOf(snapshot)
-      if (current === null) return ''
-      return this.rootTitleOf(current, snapshot?.byId ?? {})
+      if (current !== null) {
+        const byId = snapshot?.byId ?? {}
+        const own = byId?.[current]?.title
+        if (typeof own === 'string' && own !== '' && !isSlotTitle(own)) return own
+        const chained = this.rootTitleOf(current, byId)
+        if (chained !== '' && !isSlotTitle(chained)) return chained
+      }
+      const reg = this.readSlotsRegistry()
+      if (reg.rootTitle !== '') return reg.rootTitle
+      return ''
     },
     /** SAVE（手动）：创建快照槽 xx-saveN；不切换。 */
     async saveSlot() {
@@ -697,13 +710,16 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const broken = []
       if (dir === null) return { ready: false, rootTitle: '', saves, autos, broken }
       const names = await listSaveFiles(dir)
+      const mdNames = new Set()
       for (const name of names) {
+        if (name.toLowerCase().endsWith('.zip')) continue
         const id = slotIdFromFileName(name)
         if (id === '') continue
         const text = await readSaveFile(dir, name)
         if (text === null) { broken.push(name); continue }
         const doc = parseSaveDoc(text)
         if (doc === null) { broken.push(name); continue }
+        mdNames.add(name)
         const entry = {
           id,
           name,
@@ -715,40 +731,64 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         if (doc.meta.auto) autos.push(entry)
         else saves.push(entry)
       }
+      // 孤儿 zip:没有对应 md 的日志备份(如手工删了 md),提示可清理。
+      for (const name of names) {
+        if (!name.toLowerCase().endsWith('.zip')) continue
+        const id = slotIdFromFileName(name)
+        if (id !== '' && !mdNames.has(id + '.md')) broken.push(name + '(孤立日志)')
+      }
       saves.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
       autos.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
       const mainTitle = this.mainTitle()
       return { ready: true, rootTitle: mainTitle, saves, autos, broken }
     },
     /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
-     * payload: { title, auto, rootTitle, sessionId, atSeq, assistantName, turns, lines } */
+     * payload: { auto, rootTitle, sessionId, atSeq, assistantName, turns, lines,
+     *            complete, zip(Uint8Array|null), exportNote }
+     * 写入顺序:先 zip(官方完整日志),再 md(可读记录+元数据);md 失败回滚 zip。
+     * 自动档仅保留最新:新档全部成功后清理旧自动档的 md+zip。 */
     async saveSlotFile(payload) {
-      const dir = await resolveSaveDir()
-      if (dir === null) {
-        // 降级:浏览器下载(Downloads)。功能可用但不在工程文件夹内。
-        const text = buildSaveDoc(payload)
-        const name = String(payload.title ?? 'gal-save') + '.md'
-        if (downloadTextFile(name, text)) {
-          return { id: name, title: payload.title, fallback: true }
-        }
-        throw new Error('未选择存档文件夹(点击「选择存档文件夹」授权一次)')
-      }
       if (payload.atSeq === null || payload.atSeq === undefined) throw new Error('还没有已完成的对话,先聊两句再存档吧')
-      const existing = await listSaveFiles(dir)
+      const dir = await resolveSaveDir()
+      const existing = dir !== null ? await listSaveFiles(dir) : []
       const ids = existing.map(slotIdFromFileName).filter(id => id !== '')
       const prefix = fileSlotPrefix(payload.rootTitle)
       const id = nextFileSlotId(prefix, ids, payload.auto === true)
       const title = typeof payload.title === 'string' && payload.title !== '' ? payload.title : id
       const name = id + '.md'
-      const text = buildSaveDoc({ ...payload, title })
-      await writeSaveFile(dir, name, text)
-      console.info('[gal-view:save] 存档文件写入:', name, '(atSeq=' + payload.atSeq + ')')
+      const zipName = id + '.zip'
+      const hasZip = payload.zip !== null && payload.zip !== undefined && payload.zip !== ''
+      const note = (typeof payload.exportNote === 'string' && payload.exportNote !== '' ? payload.exportNote + '。' : '')
+        + (hasZip ? '' : '官方日志导出不可用,完整记录以文本转录为准。')
+      const text = buildSaveDoc({ ...payload, title, note: note === '' ? undefined : note })
+      if (dir === null) {
+        // 降级:浏览器下载(Downloads)。功能可用但不在工程文件夹内。
+        let ok = true
+        if (hasZip) ok = downloadBlobFile(zipName, payload.zip, 'application/zip') && ok
+        ok = downloadTextFile(name, text) && ok
+        if (!ok) throw new Error('下载存档失败(浏览器不支持文件写入)')
+        return { id, name, title, fallback: true }
+      }
+      // ① 官方完整日志 zip(先写)
+      if (hasZip) {
+        await writeSaveZip(dir, zipName, payload.zip)
+        console.info('[gal-view:save] 日志备份写入:', zipName)
+      }
+      // ② 可读记录 md;失败回滚 zip
+      try {
+        await writeSaveFile(dir, name, text)
+      } catch (cause) {
+        if (hasZip) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
+        throw cause
+      }
+      console.info('[gal-view:save] 存档文件写入:', name, '(atSeq=' + payload.atSeq + ', 完整日志=' + String(hasZip) + ')')
+      // ③ 自动档清理(新档成功后)
       if (payload.auto === true) {
-        // 自动档仅保留最新一个:删除目录里旧的自动档文件。
         for (const oldName of existing) {
           const slot = slotFromFileName(oldName, prefix)
           if (slot !== null && slot.auto && slot.id !== id) {
             await removeSaveFile(dir, oldName)
+            await removeSaveFile(dir, slot.id + '.zip')
             console.info('[gal-view:save] 清理旧自动档文件:', oldName)
           }
         }
@@ -827,11 +867,15 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const dir = await resolveSaveDir()
       if (dir === null) throw new Error('未选择存档文件夹')
       const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
+      const zipName = slotIdFromFileName(name) + '.zip'
       const removed = await removeSaveFile(dir, name)
+      await removeSaveFile(dir, zipName)
       console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
       return removed
     },
-    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。 */
+    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。
+     * 仅作为官方导出失败时的兜底;采集后必须调用 shrinkWindowBack 收缩窗口,
+     * 否则官方视图会渲染全部历史行导致界面卡死。 */
     async pageFullHistory() {
       const id = this.currentSessionId()
       if (id === null) return
@@ -848,6 +892,48 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       }
       if (guard >= 60) console.warn('[gal-view:save] 历史回拉达到上限,记录可能不完整(前 3000 条内)')
+    },
+    /** 窗口收缩:官方重连同款 resync,重置窗口并重拉尾部页。
+     * 用于回拉完整历史后的恢复;运行中/有待处理交互时禁止调用(调用方保证)。 */
+    async shrinkWindowBack() {
+      const id = this.currentSessionId()
+      if (id === null) return false
+      const session = sessionsSvc?.binding?.(id)?.session ?? null
+      if (session === null) return false
+      try {
+        if (typeof session.resync === 'function') {
+          await session.resync()
+          return true
+        }
+        if (typeof session.open === 'function') {
+          await session.open()
+          return true
+        }
+      } catch (cause) {
+        console.warn('[gal-view:save] 窗口收缩失败:', cause)
+      }
+      return false
+    },
+    /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
+     * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
+    async exportSessionLog(sessionId) {
+      if (typeof fetch !== 'function') throw new Error('当前环境不支持网络请求')
+      const base = (typeof window !== 'undefined' && typeof window.location === 'object' && window.location !== null
+        && typeof window.location.origin === 'string' && window.location.origin !== '' && window.location.origin !== 'null')
+        ? window.location.origin
+        : 'http://dsh.internal'
+      const url = new URL('/api/session.export', base)
+      url.searchParams.set('sessionId', String(sessionId))
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+      const timer = setTimeout(() => { controller?.abort() }, 60000)
+      try {
+        const response = await fetch(url.toString(), { method: 'GET', signal: controller?.signal ?? undefined })
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+        const buffer = await response.arrayBuffer()
+        return new Uint8Array(buffer)
+      } finally {
+        clearTimeout(timer)
+      }
     },
   }
 }
