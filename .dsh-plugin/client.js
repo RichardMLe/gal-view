@@ -4427,6 +4427,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   const runningCalls = useSession((s) => s.runningCalls);
   const pending = useSession((s) => s.pending);
   const promptError = useSession((s) => s.promptError);
+  const autoSaveStatusSnapshot = typeof useAutoSaveStatus === "function" ? useAutoSaveStatus((s) => s) : null;
   const [mode, setMode] = (0, import_react4.useState)("game");
   const [auto, setAuto] = (0, import_react4.useState)(false);
   const [historyOpen, setHistoryOpen] = (0, import_react4.useState)(false);
@@ -4876,7 +4877,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       fontsMap: fonts.map,
       onExitEditor: () => setMode("game")
     }
-  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines: displayLines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false), autoSaveStatus: typeof useAutoSaveStatus === "function" ? useAutoSaveStatus((s) => s) : null }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running, onRequestSave: requestSave, onLoaded: handleLoaded })));
+  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines: displayLines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false), autoSaveStatus: autoSaveStatusSnapshot }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running, onRequestSave: requestSave, onLoaded: handleLoaded })));
 }
 
 // .dsh-plugin/client/SettingsTab.jsx

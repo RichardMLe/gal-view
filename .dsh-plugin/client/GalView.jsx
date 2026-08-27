@@ -539,6 +539,9 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const runningCalls = useSession(s => s.runningCalls)
   const pending = useSession(s => s.pending)
   const promptError = useSession(s => s.promptError)
+  // 自动存档状态(apply 级全局源)。必须在顶层无条件调用:条件调用 hook 会破坏
+  // hook 顺序,设置面板打开时(settingsOpen 翻转)直接崩溃。
+  const autoSaveStatusSnapshot = typeof useAutoSaveStatus === 'function' ? useAutoSaveStatus(s => s) : null
 
   const [mode, setMode] = useState('game')
   const [auto, setAuto] = useState(false)
@@ -1138,7 +1141,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       )}
 
       {historyOpen && <HistoryPanel scene={scene} lines={displayLines} onClose={() => setHistoryOpen(false)} />}
-      {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} autoSaveStatus={typeof useAutoSaveStatus === 'function' ? useAutoSaveStatus(s => s) : null} />}
+      {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} autoSaveStatus={autoSaveStatusSnapshot} />}
       {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} running={running} onRequestSave={requestSave} onLoaded={handleLoaded} />}
       </div>
     </GalErrorBoundary>
