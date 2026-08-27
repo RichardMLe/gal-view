@@ -488,6 +488,16 @@ export const CSS = `
 }
 .gv-saves-auth p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: var(--gv-text); }
 .gv-saves-auth-actions { display: flex; gap: 8px; }
+
+/* ---------- 错误边界 ---------- */
+.gv-crash { display: flex; align-items: center; justify-content: center; }
+.gv-crash-box {
+  max-width: 460px; padding: 20px 24px;
+  background: var(--gv-panel-2); border: 1px solid var(--gv-line-strong); border-radius: 6px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+}
+.gv-crash-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--gv-accent-red); }
+.gv-crash-msg { margin: 0; font-size: 12px; line-height: 1.7; color: var(--gv-text); white-space: pre-wrap; word-break: break-word; }
 .gv-saves-list {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin-top: 8px;

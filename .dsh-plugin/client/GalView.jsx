@@ -459,6 +459,37 @@ function causeText(cause) {
   return String(cause)
 }
 
+/** GAL 视窗错误边界:渲染异常时显示可读错误(便于定位),而不是整个视窗空白。 */
+class GalErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[gal-view] 视图渲染错误:', error, info)
+  }
+
+  render() {
+    if (this.state.error !== null) {
+      return (
+        <div className="gv-root gv-crash" data-gal-view="">
+          <div className="gv-crash-box">
+            <p className="gv-crash-title">GAL 视窗遇到错误</p>
+            <p className="gv-crash-msg">{String(this.state.error !== null && typeof this.state.error === 'object' && this.state.error.message ? this.state.error.message : this.state.error)}</p>
+            <button type="button" className="gv-btn" onClick={() => this.setState({ error: null })}>重试</button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 /**
  * 填满会话区：挂载时隐藏会话外壳的输入席（data-composer-seat），让视窗占满整个
  * 会话主体（data-conversation-scroll）。GAL 视窗只在自身激活时被挂载，卸载（切回
@@ -991,7 +1022,8 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   // 背景由舞台 cover 模式铺满整个视窗（第 12 轮调整），不再需要模糊延展层。
 
   return (
-    <div className="gv-root" data-gal-view="" data-gal-mode={mode} style={rootStyle} ref={rootRef}>
+    <GalErrorBoundary>
+      <div className="gv-root" data-gal-view="" data-gal-mode={mode} style={rootStyle} ref={rootRef}>
       <div className="gv-topbar">
         <div className="gv-brand">
           <span className="gv-brand-mark" aria-hidden="true" />
@@ -1108,6 +1140,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
       {historyOpen && <HistoryPanel scene={scene} lines={displayLines} onClose={() => setHistoryOpen(false)} />}
       {settingsOpen && <SettingsPanel scene={scene} api={api} onClose={() => setSettingsOpen(false)} autoSaveStatus={typeof useAutoSaveStatus === 'function' ? useAutoSaveStatus(s => s) : null} />}
       {saveMode !== null && <SavePanel api={api} mode={saveMode} onClose={() => setSaveMode(null)} running={running} onRequestSave={requestSave} onLoaded={handleLoaded} />}
-    </div>
+      </div>
+    </GalErrorBoundary>
   )
 }

@@ -530,6 +530,16 @@ var CSS = `
 }
 .gv-saves-auth p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: var(--gv-text); }
 .gv-saves-auth-actions { display: flex; gap: 8px; }
+
+/* ---------- \u9519\u8BEF\u8FB9\u754C ---------- */
+.gv-crash { display: flex; align-items: center; justify-content: center; }
+.gv-crash-box {
+  max-width: 460px; padding: 20px 24px;
+  background: var(--gv-panel-2); border: 1px solid var(--gv-line-strong); border-radius: 6px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+}
+.gv-crash-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--gv-accent-red); }
+.gv-crash-msg { margin: 0; font-size: 12px; line-height: 1.7; color: var(--gv-text); white-space: pre-wrap; word-break: break-word; }
 .gv-saves-list {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin-top: 8px;
@@ -4362,6 +4372,24 @@ function causeText2(cause) {
   if (typeof cause === "object" && typeof cause.message === "string") return cause.message;
   return String(cause);
 }
+var GalErrorBoundary = class extends import_react4.default.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error("[gal-view] \u89C6\u56FE\u6E32\u67D3\u9519\u8BEF:", error, info);
+  }
+  render() {
+    if (this.state.error !== null) {
+      return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-root gv-crash", "data-gal-view": "" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-crash-box" }, /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-crash-title" }, "GAL \u89C6\u7A97\u9047\u5230\u9519\u8BEF"), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-crash-msg" }, String(this.state.error !== null && typeof this.state.error === "object" && this.state.error.message ? this.state.error.message : this.state.error)), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: () => this.setState({ error: null }) }, "\u91CD\u8BD5")));
+    }
+    return this.props.children;
+  }
+};
 function useFillSessionArea(rootRef) {
   (0, import_react4.useEffect)(() => {
     const root = rootRef.current;
@@ -4770,7 +4798,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
   const line = currentLine !== null ? { ...currentLine, speaker } : null;
   const aiDisplayName = (0, import_react4.useMemo)(() => assistantDisplayName(scene), [scene]);
   const inputPlaceholder = "\u4F60\u60F3\u548C" + aiDisplayName + "\u8BF4\u4EC0\u4E48\u5462\uFF1F";
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-root", "data-gal-view": "", "data-gal-mode": mode, style: rootStyle, ref: rootRef }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-topbar" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-brand" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-brand-mark", "aria-hidden": "true" }), /* @__PURE__ */ import_react4.default.createElement("span", null, "GAL \u89C6\u7A97")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-mode-switch", role: "tablist", "aria-label": "\u6A21\u5F0F\u5207\u6362" }, /* @__PURE__ */ import_react4.default.createElement(
+  return /* @__PURE__ */ import_react4.default.createElement(GalErrorBoundary, null, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-root", "data-gal-view": "", "data-gal-mode": mode, style: rootStyle, ref: rootRef }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-topbar" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-brand" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-brand-mark", "aria-hidden": "true" }), /* @__PURE__ */ import_react4.default.createElement("span", null, "GAL \u89C6\u7A97")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-mode-switch", role: "tablist", "aria-label": "\u6A21\u5F0F\u5207\u6362" }, /* @__PURE__ */ import_react4.default.createElement(
     "button",
     {
       type: "button",
@@ -4848,7 +4876,7 @@ function GalView({ useSession, useInput, inputActions, useScene, useHistory, use
       fontsMap: fonts.map,
       onExitEditor: () => setMode("game")
     }
-  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines: displayLines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false), autoSaveStatus: typeof useAutoSaveStatus === "function" ? useAutoSaveStatus((s) => s) : null }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running, onRequestSave: requestSave, onLoaded: handleLoaded }));
+  ), historyOpen && /* @__PURE__ */ import_react4.default.createElement(HistoryPanel, { scene, lines: displayLines, onClose: () => setHistoryOpen(false) }), settingsOpen && /* @__PURE__ */ import_react4.default.createElement(SettingsPanel, { scene, api, onClose: () => setSettingsOpen(false), autoSaveStatus: typeof useAutoSaveStatus === "function" ? useAutoSaveStatus((s) => s) : null }), saveMode !== null && /* @__PURE__ */ import_react4.default.createElement(SavePanel, { api, mode: saveMode, onClose: () => setSaveMode(null), running, onRequestSave: requestSave, onLoaded: handleLoaded })));
 }
 
 // .dsh-plugin/client/SettingsTab.jsx
@@ -6683,7 +6711,13 @@ function apply(ctx) {
   const historySource = createObservable({ undo: 0, redo: 0 });
   const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc, connectionSvc);
   const autoSaveSource = createObservable({ lastAt: null, lastResult: null, lastReason: "", turns: 0, baseline: 0, every: 10 });
-  const disposeAutoSave = createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource: autoSaveSource });
+  let disposeAutoSave = () => {
+  };
+  try {
+    disposeAutoSave = createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource: autoSaveSource });
+  } catch (cause) {
+    console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u63A7\u5236\u5668\u521D\u59CB\u5316\u5931\u8D25(\u81EA\u52A8\u5B58\u6863\u4E0D\u53EF\u7528,\u5176\u4F59\u529F\u80FD\u4E0D\u53D7\u5F71\u54CD):", cause);
+  }
   ctx.effect(() => disposeAutoSave, "gal-view: global autosave");
   let lastMainId = null;
   let lastOpAt = 0;

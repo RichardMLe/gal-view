@@ -1240,8 +1240,14 @@ export function apply(ctx) {
 
   // ---- 全局自动存档控制器(apply 级,不依赖 GAL 视图挂载)----
   // 在其他窗口/皮肤下同样运行;状态发布到 autoSaveSource 供设置面板显示。
+  // 初始化隔离:控制器异常绝不影响插件其余部分(视图注册/存档面板等)。
   const autoSaveSource = createObservable({ lastAt: null, lastResult: null, lastReason: '', turns: 0, baseline: 0, every: 10 })
-  const disposeAutoSave = createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource: autoSaveSource })
+  let disposeAutoSave = () => {}
+  try {
+    disposeAutoSave = createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource: autoSaveSource })
+  } catch (cause) {
+    console.warn('[gal-view] 自动存档控制器初始化失败(自动存档不可用,其余功能不受影响):', cause)
+  }
   ctx.effect(() => disposeAutoSave, 'gal-view: global autosave')
 
   // ---- 存档操作看门狗(仅记录,不干预)----
