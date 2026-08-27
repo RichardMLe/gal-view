@@ -33,7 +33,7 @@ import {
 import {
   fsAccessSupported, pickDirectory, resolveSaveDir, loadDirHandle, listSaveFiles,
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
-  writeSaveZip, downloadBlobFile,
+  writeSaveZip, downloadBlobFile, withTimeout,
 } from './fsaccess.mjs'
 import { wireEventsToLines } from './transcript-log.mjs'
 import { createGlobalAutoSave } from './autosave.mjs'
@@ -714,13 +714,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const autos = []
       const broken = []
       if (dir === null) return { ready: false, rootTitle: '', saves, autos, broken }
-      const names = await listSaveFiles(dir)
+      const names = await withTimeout(listSaveFiles(dir), 8000, [])
       const mdNames = new Set()
       for (const name of names) {
         if (name.toLowerCase().endsWith('.zip')) continue
         const id = slotIdFromFileName(name)
         if (id === '') continue
-        const text = await readSaveFile(dir, name)
+        const text = await withTimeout(readSaveFile(dir, name), 5000, null)
         if (text === null) { broken.push(name); continue }
         const doc = parseSaveDoc(text)
         if (doc === null) { broken.push(name); continue }
@@ -887,8 +887,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (dir === null) throw new Error('未选择存档文件夹')
       const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
       const zipName = slotIdFromFileName(name) + '.zip'
-      const removed = await removeSaveFile(dir, name)
-      await removeSaveFile(dir, zipName)
+      const removed = await withTimeout(removeSaveFile(dir, name), 5000, false)
+      await withTimeout(removeSaveFile(dir, zipName), 5000, false)
       console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
       return removed
     },
@@ -898,9 +898,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (dir === null) throw new Error('未选择存档文件夹')
       const clean = String(name).replace('(孤立日志)', '')
       if (clean === '') return false
-      const removed = await removeSaveFile(dir, clean)
+      const removed = await withTimeout(removeSaveFile(dir, clean), 5000, false)
       if (clean.toLowerCase().endsWith('.md')) {
-        await removeSaveFile(dir, clean.replace(/\.md$/i, '') + '.zip')
+        await withTimeout(removeSaveFile(dir, clean.replace(/\.md$/i, '') + '.zip'), 5000, false)
       }
       console.info('[gal-view:save] 删除无法识别文件:', clean, '->', String(removed))
       return removed

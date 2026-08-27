@@ -199,3 +199,15 @@ export function downloadTextFile(name, text) {
     return false
   }
 }
+
+/** 超时保护:文件系统操作挂住(权限/浏览器怪癖)时按超时返回回退值,
+ * 避免面板忙碌锁长时间锁死、用户以为崩溃。 */
+export function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms)
+    Promise.resolve(promise).then(
+      value => { clearTimeout(timer); resolve(value) },
+      () => { clearTimeout(timer); resolve(fallback) },
+    )
+  })
+}

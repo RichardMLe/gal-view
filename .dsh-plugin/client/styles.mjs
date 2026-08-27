@@ -477,7 +477,7 @@ export const CSS = `
   border: 1px dashed var(--gv-line-strong); border-radius: 4px;
   background: rgba(16, 20, 38, .4);
 }
-.gv-saves-dir-label { font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
+.gv-saves-dir-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
 /* 分区标题行:标题 + 右侧操作按钮(旧式存档迁移)。 */
 .gv-saves-group-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 /* 首次存档授权提示框。 */

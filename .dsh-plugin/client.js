@@ -519,7 +519,7 @@ var CSS = `
   border: 1px dashed var(--gv-line-strong); border-radius: 4px;
   background: rgba(16, 20, 38, .4);
 }
-.gv-saves-dir-label { font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
+.gv-saves-dir-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
 /* \u5206\u533A\u6807\u9898\u884C:\u6807\u9898 + \u53F3\u4FA7\u64CD\u4F5C\u6309\u94AE(\u65E7\u5F0F\u5B58\u6863\u8FC1\u79FB)\u3002 */
 .gv-saves-group-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 /* \u9996\u6B21\u5B58\u6863\u6388\u6743\u63D0\u793A\u6846\u3002 */
@@ -4254,26 +4254,33 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     if (typeof window.confirm === "function" && !window.confirm("\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D\uFF1F\u6587\u4EF6\u5C06\u88AB\u6C38\u4E45\u5220\u9664\u3002")) return;
     setBusy(true);
     setError(null);
+    setNotice("\u6B63\u5728\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D\u2026");
     try {
       if (typeof api?.deleteSlotFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664\u5B58\u6863");
       await api.deleteSlotFile(slot.id);
+      setNotice("\u5DF2\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D");
       await refresh();
     } catch (cause) {
       setError(causeText2(cause));
+      setNotice(null);
     }
     setBusy(false);
   };
   const removeBroken = async (name2) => {
     if (busy) return;
-    if (typeof window.confirm === "function" && !window.confirm("\u5220\u9664\u6587\u4EF6\u300C" + name2.replace("(\u5B64\u7ACB\u65E5\u5FD7)", "") + "\u300D\uFF1F")) return;
+    const clean = String(name2).replace("(\u5B64\u7ACB\u65E5\u5FD7)", "");
+    if (typeof window.confirm === "function" && !window.confirm("\u5220\u9664\u6587\u4EF6\u300C" + clean + "\u300D\uFF1F")) return;
     setBusy(true);
     setError(null);
+    setNotice("\u6B63\u5728\u5220\u9664 " + clean + "\u2026");
     try {
       if (typeof api?.deleteBrokenFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664");
       await api.deleteBrokenFile(name2);
+      setNotice("\u5DF2\u5220\u9664 " + clean);
       await refresh();
     } catch (cause) {
       setError(causeText2(cause));
+      setNotice(null);
     }
     setBusy(false);
   };
@@ -5409,6 +5416,21 @@ function downloadTextFile(name2, text) {
     return false;
   }
 }
+function withTimeout(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      }
+    );
+  });
+}
 
 // .dsh-plugin/client/transcript-log.mjs
 var SURFACE_EVENT_TYPES = Object.freeze(["user/message", "assistant/message", "tool/result"]);
@@ -6242,13 +6264,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const autos = [];
       const broken = [];
       if (dir === null) return { ready: false, rootTitle: "", saves, autos, broken };
-      const names = await listSaveFiles(dir);
+      const names = await withTimeout(listSaveFiles(dir), 8e3, []);
       const mdNames = /* @__PURE__ */ new Set();
       for (const name2 of names) {
         if (name2.toLowerCase().endsWith(".zip")) continue;
         const id = slotIdFromFileName(name2);
         if (id === "") continue;
-        const text = await readSaveFile(dir, name2);
+        const text = await withTimeout(readSaveFile(dir, name2), 5e3, null);
         if (text === null) {
           broken.push(name2);
           continue;
@@ -6412,8 +6434,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
       const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
       const zipName = slotIdFromFileName(name2) + ".zip";
-      const removed = await removeSaveFile(dir, name2);
-      await removeSaveFile(dir, zipName);
+      const removed = await withTimeout(removeSaveFile(dir, name2), 5e3, false);
+      await withTimeout(removeSaveFile(dir, zipName), 5e3, false);
       console.info("[gal-view:save] \u5220\u9664\u5B58\u6863\u6587\u4EF6:", name2, "->", String(removed));
       return removed;
     },
@@ -6423,9 +6445,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
       const clean = String(name2).replace("(\u5B64\u7ACB\u65E5\u5FD7)", "");
       if (clean === "") return false;
-      const removed = await removeSaveFile(dir, clean);
+      const removed = await withTimeout(removeSaveFile(dir, clean), 5e3, false);
       if (clean.toLowerCase().endsWith(".md")) {
-        await removeSaveFile(dir, clean.replace(/\.md$/i, "") + ".zip");
+        await withTimeout(removeSaveFile(dir, clean.replace(/\.md$/i, "") + ".zip"), 5e3, false);
       }
       console.info("[gal-view:save] \u5220\u9664\u65E0\u6CD5\u8BC6\u522B\u6587\u4EF6:", clean, "->", String(removed));
       return removed;

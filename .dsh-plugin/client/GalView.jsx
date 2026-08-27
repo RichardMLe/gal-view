@@ -253,26 +253,33 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     if (typeof window.confirm === 'function' && !window.confirm('删除存档「' + slot.title + '」？文件将被永久删除。')) return
     setBusy(true)
     setError(null)
+    setNotice('正在删除存档「' + slot.title + '」…')
     try {
       if (typeof api?.deleteSlotFile !== 'function') throw new Error('当前环境不支持删除存档')
       await api.deleteSlotFile(slot.id)
+      setNotice('已删除存档「' + slot.title + '」')
       await refresh()
     } catch (cause) {
       setError(causeText(cause))
+      setNotice(null)
     }
     setBusy(false)
   }
   const removeBroken = async (name) => {
     if (busy) return
-    if (typeof window.confirm === 'function' && !window.confirm('删除文件「' + name.replace('(孤立日志)', '') + '」？')) return
+    const clean = String(name).replace('(孤立日志)', '')
+    if (typeof window.confirm === 'function' && !window.confirm('删除文件「' + clean + '」？')) return
     setBusy(true)
     setError(null)
+    setNotice('正在删除 ' + clean + '…')
     try {
       if (typeof api?.deleteBrokenFile !== 'function') throw new Error('当前环境不支持删除')
       await api.deleteBrokenFile(name)
+      setNotice('已删除 ' + clean)
       await refresh()
     } catch (cause) {
       setError(causeText(cause))
+      setNotice(null)
     }
     setBusy(false)
   }
