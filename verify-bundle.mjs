@@ -141,7 +141,8 @@ const historyMock = ({ sessionId, beforeSeq, maxMessages }) => {
     page = idx > 0 ? all.slice(Math.max(0, idx - maxMessages), idx) : []
   }
   const hasMore = all.length > 0 && page.length > 0 && all[0].seq < page[0].seq
-  return Promise.resolve({ result: { events: page.map(event => ({ event })), hasMore, projections: undefined } })
+  // 与官方 web-runtime 实测契约一致:{ result: { ok, value: { events, hasMore, projections } } }
+  return Promise.resolve({ result: { ok: true, value: { events: page.map(event => ({ event, view: null })), hasMore, projections: undefined } } })
 }
 const connectionMock = { api: { sessions: { history: historyMock } } }
 

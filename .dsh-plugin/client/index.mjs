@@ -35,7 +35,7 @@ import {
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
   writeSaveZip, downloadBlobFile, withTimeout,
 } from './fsaccess.mjs'
-import { wireEventsToLines } from './transcript-log.mjs'
+import { wireEventsToLines, readHistoryResponse } from './transcript-log.mjs'
 import { createGlobalAutoSave } from './autosave.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
@@ -948,11 +948,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
             ...(beforeSeq !== undefined ? { beforeSeq } : {}),
           }), 15000, undefined)
           if (response === undefined) throw new Error('history 请求超时')
-          const value = response?.result ?? response
-          const page = Array.isArray(value?.events) ? value.events : []
+          // 官方契约:{ result: { ok, error?, value: { events, hasMore } } }
+          // —— 事件在 result.value.events,不在 result.events(曾读错层导致永远空页)。
+          const pageInfo = readHistoryResponse(response)
+          if (pageInfo.error !== null) throw new Error(pageInfo.error)
+          const page = pageInfo.events
           if (page.length === 0) break
           events.unshift(...page)
-          if (value.hasMore !== true) break
+          if (pageInfo.hasMore !== true) break
           const first = page[0]?.event
           if (first === null || first === undefined || typeof first.seq !== 'number') break
           beforeSeq = first.seq

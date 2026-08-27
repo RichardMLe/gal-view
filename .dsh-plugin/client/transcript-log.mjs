@@ -55,3 +55,29 @@ export function wireEventsToLines(entries) {
   }
   return { lines, turns, atSeq }
 }
+
+/**
+ * 官方 sessions.history RPC 响应 → { events, hasMore, error }。
+ * 真实契约(web-runtime doOpen/loadOlder,2026-08 实测源码):
+ *   await api.sessions.history({ sessionId, maxMessages, beforeSeq? })
+ *   → { result: { ok: boolean, error?: string,
+ *        value: { events: [{ event, view }], hasMore: boolean, projections? } } }
+ * 注意:事件挂在 result.value.events 下(不是 result.events);旧假设形状导致
+ * 真实浏览器里永远读到空页——自动档不触发、手动档误报「还没有已完成对话」的根因。
+ * 解析从严:任何不匹配官方契约的形状都返回可读 error(不再静默读成空页)。
+ */
+export function readHistoryResponse(response) {
+  if (response === null || typeof response !== 'object') {
+    return { events: [], hasMore: false, error: 'history 响应为空' }
+  }
+  const result = response.result
+  if (result === null || typeof result !== 'object') {
+    return { events: [], hasMore: false, error: 'history 响应形状不符(缺 result 层)' }
+  }
+  if (result.ok !== true) {
+    return { events: [], hasMore: false, error: 'history 返回失败: ' + String(result.error ?? '未知错误') }
+  }
+  const value = result.value !== null && typeof result.value === 'object' ? result.value : {}
+  const events = Array.isArray(value.events) ? value.events : []
+  return { events, hasMore: value.hasMore === true, error: null }
+}

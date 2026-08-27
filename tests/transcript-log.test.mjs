@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isAppendSurfaceEvent, lineFromWireEvent, wireEventsToLines, SURFACE_EVENT_TYPES } from '../.dsh-plugin/client/transcript-log.mjs'
+import { isAppendSurfaceEvent, lineFromWireEvent, wireEventsToLines, readHistoryResponse, SURFACE_EVENT_TYPES } from '../.dsh-plugin/client/transcript-log.mjs'
 
 test('isAppendSurfaceEvent 只认官方转写来源(append 面,替换副本过滤)', () => {
   assert.equal(isAppendSurfaceEvent(null), false)
@@ -51,4 +51,33 @@ test('wireEventsToLines:空/垃圾输入安全', () => {
   const weird = wireEventsToLines([null, 42, { event: { type: 'x' } }])
   assert.equal(weird.lines.length, 0)
   assert.equal(weird.atSeq, null)
+})
+
+test('readHistoryResponse:官方真实契约 result.value.events(不是 result.events)', () => {
+  const events = [{ event: { type: 'turn/start', seq: 1 } }, { event: { type: 'user/message', surfaceOp: 'append', seq: 2 } }]
+  const page = readHistoryResponse({ result: { ok: true, value: { events, hasMore: true, projections: undefined } } })
+  assert.equal(page.error, null)
+  assert.deepEqual(page.events, events)
+  assert.equal(page.hasMore, true)
+  // 旧错误形状(result.events,无 ok/value 层):显式报错,不再静默读成空页
+  const legacy = readHistoryResponse({ result: { events } })
+  assert.equal(legacy.error, 'history 返回失败: 未知错误')
+  assert.deepEqual(legacy.events, [])
+  assert.equal(legacy.hasMore, false)
+  // 完全无 result 包裹的扁平形状:显式报错(官方契约必有 result 层)
+  const flat = readHistoryResponse({ events })
+  assert.equal(flat.error, 'history 响应形状不符(缺 result 层)')
+  assert.deepEqual(flat.events, [])
+})
+
+test('readHistoryResponse:失败/垃圾输入 → 可读 error', () => {
+  const failed = readHistoryResponse({ result: { ok: false, error: 'session not found' } })
+  assert.equal(failed.events.length, 0)
+  assert.equal(failed.error, 'history 返回失败: session not found')
+  const empty = readHistoryResponse(undefined)
+  assert.equal(empty.error, 'history 响应为空')
+  const junk = readHistoryResponse({ result: { ok: true, value: null } })
+  assert.equal(junk.error, null)
+  assert.deepEqual(junk.events, [])
+  assert.equal(junk.hasMore, false)
 })
