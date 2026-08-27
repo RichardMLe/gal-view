@@ -156,9 +156,14 @@ test('normalizeSettings：persona/pendingStyle 白名单合并', () => {
   assert.equal(d.persona.witPercent, 15)
   assert.equal(d.pendingStyle.titleSize, 16)
   assert.equal(d.autoSaveEvery, 10)
+  assert.equal(d.archiveOldOnLoad, false)
   // 自动存档间隔夹取
   assert.equal(normalizeScene({ settings: { autoSaveEvery: 999 } }).settings.autoSaveEvery, 100)
   assert.equal(normalizeScene({ settings: { autoSaveEvery: 0 } }).settings.autoSaveEvery, 0)
+  // 读档归档开关:只认真值,其余回退默认 false
+  assert.equal(normalizeScene({ settings: { archiveOldOnLoad: true } }).settings.archiveOldOnLoad, true)
+  assert.equal(normalizeScene({ settings: { archiveOldOnLoad: 'yes' } }).settings.archiveOldOnLoad, false)
+  assert.equal(normalizeScene({ settings: { archiveOldOnLoad: 1 } }).settings.archiveOldOnLoad, false)
 })
 
 test('ensureBackgroundCover：铺满型背景归一到舞台尺寸；其余不动；幂等', () => {

@@ -81,6 +81,7 @@ export function defaultSettings() {
     persona: cloneDefaultPersona(),
     pendingStyle: { titleSize: 16, optionSize: 15, detailSize: 15 },
     autoSaveEvery: 10,
+    archiveOldOnLoad: false,
   }
 }
 
@@ -387,6 +388,7 @@ export function normalizeSettings(raw) {
     persona: normalizePersona(raw.persona),
     pendingStyle: normalizePendingStyle(raw.pendingStyle),
     autoSaveEvery: Math.min(100, Math.max(0, Math.round(toNumber(raw.autoSaveEvery, base.autoSaveEvery)))),
+    archiveOldOnLoad: raw.archiveOldOnLoad === true,
   }
 }
 

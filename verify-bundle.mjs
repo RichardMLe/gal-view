@@ -323,6 +323,15 @@ try {
   if (forkCalls[forkBeforePfs]?.atSeq !== 60) { console.error('FAIL load atSeq from history: ' + JSON.stringify(forkCalls[forkBeforePfs])); process.exit(1) }
   console.log('performFileSave ok (turns=' + pfsEntry.turns + ', atSeq=60)')
 
+  // —— 读档归档开关:默认关(上方 loadSaveFile 已证明不归档);开启后读档应归档旧主线 ——
+  await registeredApi.updateSettings({ archiveOldOnLoad: true })
+  listCurrent = 's-root'
+  const archivedBeforeToggle = archiveCalls.length
+  await registeredApi.loadSaveFile('深海脑-save1')
+  if (archiveCalls.length !== archivedBeforeToggle + 1 || archiveCalls[archiveCalls.length - 1] !== 's-root') { console.error('FAIL archive-on-load setting: ' + JSON.stringify(archiveCalls)); process.exit(1) }
+  await registeredApi.updateSettings({ archiveOldOnLoad: false })
+  console.log('archive-on-load setting ok')
+
   // —— skipZip(自动档):不调用导出端点(零 flush),仅完整文本 md ——
   listCurrent = 's-root'
   const pfsAuto = await registeredApi.performFileSave({ auto: true, skipZip: true, guardCheck: async () => ({ sessionId: 's-root', turns: 15 }) })

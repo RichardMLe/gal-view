@@ -154,7 +154,15 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
           }}
         />
       </label>
-      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」存档（0 = 关闭）；自动存档仅保留最新一个。存档保存为工程目录 .gal-view-saves 下的文件（首次使用请在存档面板选择工程文件夹）；读档按存档点还原多轮对话，测试期旧对话保留不销毁。</p>
+      <label className="gv-settings-row">
+        <span>读档后归档旧对话</span>
+        <input
+          type="checkbox"
+          checked={scene.settings.archiveOldOnLoad === true}
+          onChange={e => api.updateSettings({ archiveOldOnLoad: e.target.checked })}
+        />
+      </label>
+      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」存档（0 = 关闭）；自动存档仅保留最新一个。存档保存为工程目录 .gal-view-saves 下的文件（首次使用请在存档面板选择工程文件夹）；读档按存档点还原多轮对话。读档后是否把旧世界线归档（从列表隐藏、可恢复）由上方的「读档后归档旧对话」开关控制，默认关闭——旧对话保留在工作区列表，可随时切回对比。</p>
       {(typeof scene.settings.autoSaveEvery === 'number' && scene.settings.autoSaveEvery > 0 && scene.settings.autoSaveEvery <= 2) && (
         <p className="gv-settings-hint">提示：间隔过小会频繁导出完整日志，建议 ≥5（仅建议，不强制）。</p>
       )}

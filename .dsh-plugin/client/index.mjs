@@ -666,9 +666,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       }
       // 销毁旧世界线：官方无删除接口，归档（列表消失、可恢复）。
-      // 测试期开关(ARCHIVE_OLD_ON_LOAD=false)：确认 load/save 完全正确前不归档，
-      // 旧线保留在工作区列表，可随时切回对比。
-      if (ARCHIVE_OLD_ON_LOAD) {
+      // 由设置项「读档后归档旧对话」控制(默认关):关时旧线保留在工作区列表,可随时切回对比。
+      if (sceneSource.getSnapshot().settings.archiveOldOnLoad === true) {
         // 只有确认已切到新线才归档；未确认时放弃归档（旧线留在列表，绝不冒险）。
         if (this.currentSessionId() === oldCurrent) {
           console.warn('[gal-view:save] load: 当前会话仍未切换,放弃归档旧线(旧线保留在工作区):', oldCurrent)
@@ -676,7 +675,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           await this.archiveSessionQuiet(oldCurrent)
         }
       } else {
-        console.info('[gal-view:save] load: 测试期不归档旧线(旧线保留在工作区):', oldCurrent)
+        console.info('[gal-view:save] load: 设置未开启归档,旧线保留在工作区:', oldCurrent)
       }
       this.noteSaveOp()
       void this.checkConversationIntegrity()
@@ -816,7 +815,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       return { id, name, title, fallback: false }
     },
     /** 读文件存档:解析 → fork(当前主线, atSeq=存档点) → 打开新线。
-     * 测试期不归档旧线(ARCHIVE_OLD_ON_LOAD=false)。
+     * 读档后是否归档旧线由设置项「读档后归档旧对话」控制(默认关,旧线保留可切回)。
      * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入。 */
     async loadSaveFile(id) {
       const dir = await resolveSaveDir()
@@ -867,14 +866,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
             // 忽略:保留继承名
           }
         }
-        if (ARCHIVE_OLD_ON_LOAD) {
+        if (sceneSource.getSnapshot().settings.archiveOldOnLoad === true) {
           if (this.currentSessionId() === mainId) {
             console.warn('[gal-view:save] load-file: 当前会话仍未切换,放弃归档旧线:', mainId)
           } else {
             await this.archiveSessionQuiet(mainId)
           }
         } else {
-          console.info('[gal-view:save] load-file: 测试期不归档旧线(旧线保留在工作区):', mainId)
+          console.info('[gal-view:save] load-file: 设置未开启归档,旧线保留在工作区:', mainId)
         }
         this.noteSaveOp()
         void this.checkConversationIntegrity()
@@ -1203,12 +1202,6 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
 
 /** 槽位注册表键（localStorage）。 */
 const SLOTS_KEY = 'gal-view:slots'
-
-/**
- * 读档后是否归档旧世界线。测试期关闭(用户要求):确认 load/save 完全正确后再改 true。
- * 关闭时旧线保留在工作区列表,可随时切回对比,不影响新世界线继续。
- */
-const ARCHIVE_OLD_ON_LOAD = false
 
 /** 标题是否像槽位名（xx-saveN / xx-自动N）——主线程标题不应取槽位名。 */
 function isSlotTitle(title) {
