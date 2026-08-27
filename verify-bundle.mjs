@@ -22,12 +22,16 @@ globalThis.indexedDB = {
       req.result = {
         objectStoreNames: { contains: () => true },
         createObjectStore() {},
-        transaction: () => ({
-          objectStore: () => ({
+        transaction: () => {
+          const tx = {}
+          // 写事务提交后回调 oncomplete(storeDirHandle 等待它再关库)
+          setTimeout(() => { if (typeof tx.oncomplete === 'function') tx.oncomplete() }, 0)
+          tx.objectStore = () => ({
             get: key => { const r = {}; setTimeout(() => { r.result = handleStore.get(key) ?? null; if (typeof r.onsuccess === 'function') r.onsuccess() }, 0); return r },
             put: (value, key) => { handleStore.set(key, value) },
-          }),
-        }),
+          })
+          return tx
+        },
         close() {},
       }
       if (typeof req.onupgradeneeded === 'function') req.onupgradeneeded()
@@ -218,6 +222,9 @@ try {
   console.log('--- 文件式存档 ---')
   const dirOk = await registeredApi.ensureSaveDir()
   if (dirOk !== true) { console.error('FAIL ensureSaveDir'); process.exit(1) }
+  const prep = await registeredApi.prepareSaveDir()
+  if (prep.status !== 'ready' || prep.dir === null) { console.error('FAIL prepareSaveDir: ' + JSON.stringify(prep)); process.exit(1) }
+  console.log('prepareSaveDir ok:', prep.status)
   listCurrent = 's-root'
   const saved = await registeredApi.saveSlotFile({
     auto: false, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42,

@@ -31,15 +31,21 @@ export async function loadDirHandle() {
   const db = await openIdb()
   if (db === null) return null
   return new Promise((resolve) => {
+    let closed = false
+    const finish = (value) => {
+      if (closed) return
+      closed = true
+      try { db.close() } catch { /* 忽略 */ }
+      resolve(value)
+    }
     try {
       const tx = db.transaction(IDB_STORE, 'readonly')
       const req = tx.objectStore(IDB_STORE).get(IDB_KEY)
-      req.onsuccess = () => resolve(req.result ?? null)
-      req.onerror = () => resolve(null)
+      // 事务完成后再关库:过早 close() 会中止事务,导致永远读不到句柄。
+      req.onsuccess = () => finish(req.result ?? null)
+      req.onerror = () => finish(null)
     } catch {
-      resolve(null)
-    } finally {
-      try { db.close() } catch { /* 忽略 */ }
+      finish(null)
     }
   })
 }
@@ -51,6 +57,12 @@ export async function storeDirHandle(handle) {
   try {
     const tx = db.transaction(IDB_STORE, 'readwrite')
     tx.objectStore(IDB_STORE).put(handle, IDB_KEY)
+    // 事务完成后再关库:过早 close() 会中止写事务,句柄丢失。
+    await new Promise((resolve) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+      tx.onabort = () => resolve()
+    })
   } catch {
     // 忽略
   } finally {
@@ -96,6 +108,27 @@ export async function resolveSaveDir() {
     console.warn('[gal-view:fs] 打开存档目录失败:', error)
     return null
   }
+}
+
+/**
+ * 用户手势内准备存档目录(手动存档入口专用,必须在点击处理器里尽早调用):
+ * ① 已有授权 → 静默复用(绝不弹任何东西);
+ * ② 未授权/权限过期 → 直接弹系统标准目录选择框(showDirectoryPicker);
+ * ③ 环境不支持 FS Access API → unsupported(调用方降级为浏览器下载)。
+ * requestPermission 与 showDirectoryPicker 都要求用户手势:脱离手势再调只会
+ * 被浏览器拒绝——这是「已授权还反复提示授权」的根因(旧流程在 10 秒导出
+ * 之后才解析目录,手势早已过期)。
+ * @returns { status: 'ready'|'picked'|'cancelled'|'unsupported', dir }
+ */
+export async function prepareSaveDir() {
+  if (!fsAccessSupported()) return { status: 'unsupported', dir: null }
+  const existing = await resolveSaveDir()
+  if (existing !== null) return { status: 'ready', dir: existing }
+  const picked = await pickDirectory()
+  if (picked === null || picked === undefined) return { status: 'cancelled', dir: null }
+  const dir = await resolveSaveDir()
+  if (dir === null) return { status: 'cancelled', dir: null }
+  return { status: 'picked', dir }
 }
 
 /** 目录内全部文件名(仅直接子文件)。 */

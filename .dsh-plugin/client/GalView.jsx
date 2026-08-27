@@ -196,7 +196,6 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   const [editingId, setEditingId] = useState(null)
   const [editText, setEditText] = useState('')
   const [dirInfo, setDirInfo] = useState(null)
-  const [authPrompt, setAuthPrompt] = useState(false)
   const [migrating, setMigrating] = useState(null)
   const refresh = useCallback(async () => {
     setLegacy(loadSaveIndex(api))
@@ -228,9 +227,18 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setPicking(true)
     setError(null)
     try {
-      if (typeof api?.ensureSaveDir !== 'function') throw new Error('当前环境不支持文件夹写入')
-      const ok = await api.ensureSaveDir()
-      if (!ok) setNotice('已取消选择')
+      // 系统标准目录选择框(showDirectoryPicker),仅当未授权/权限过期时弹出。
+      if (typeof api?.prepareSaveDir === 'function') {
+        const prep = await api.prepareSaveDir()
+        if (prep.status === 'cancelled') setNotice('已取消选择')
+        else if (prep.status === 'unsupported') setError('当前浏览器不支持文件夹写入，存档将改为下载到「下载」文件夹')
+        else setNotice(prep.status === 'picked' ? '已选择存档文件夹' : '存档文件夹已就绪')
+      } else if (typeof api?.ensureSaveDir === 'function') {
+        const ok = await api.ensureSaveDir()
+        if (!ok) setNotice('已取消选择')
+      } else {
+        throw new Error('当前环境不支持文件夹写入')
+      }
       await refresh()
     } catch (cause) {
       setError(causeText(cause))
@@ -252,13 +260,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
       setNotice(result !== null && result.fallback === true
         ? '已下载存档文件（此环境不支持文件夹写入，请把文件放进工程 .gal-view-saves 文件夹）'
         : '已创建存档「' + result.title + '」（永久保存，读档也不会改变它）')
-      setAuthPrompt(false)
       await refresh()
     } catch (cause) {
+      // 极端兜底:目录在存档中途变得不可用(理论上 requestSave 已在手势内解决)。
       if (cause !== null && typeof cause === 'object' && cause.code === 'dir-unauthorized') {
-        setError(null)
+        setError('存档文件夹未授权或不可用：请点击上方「选择存档文件夹」用系统选择框重新选择一次，再点存档')
         setNotice(null)
-        setAuthPrompt(true)
       } else {
         setError(causeText(cause))
         setNotice(null)
@@ -433,15 +440,6 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
             {picking ? '选择中…' : (dirInfo !== null && dirInfo.authorized === true ? '重新选择' : '选择存档文件夹')}
           </button>
         </div>
-        {authPrompt && (
-          <div className="gv-saves-auth">
-            <p>首次存档需要授权：请选择当前工程文件夹{dirInfo !== null && dirInfo.projectPath !== '' ? '（' + dirInfo.projectPath + '）' : ''}。浏览器不允许程序按路径直接写文件，需要你点选一次；之后将静默写入。</p>
-            <div className="gv-saves-auth-actions">
-              <button type="button" className="gv-btn gv-btn-gold" disabled={picking} onClick={async () => { await pickDir(); void save() }}>选择文件夹并授权</button>
-              <button type="button" className="gv-btn" disabled={picking} onClick={() => setAuthPrompt(false)}>取消</button>
-            </div>
-          </div>
-        )}
         {mode === 'save'
           ? <p className="gv-saves-hint">存档 = 把当前对话完整复制进工程 .gal-view-saves 文件夹：官方完整日志 zip + 可读记录 md（永久保存，读档不会改变它）；存档期间请勿继续对话，读档按存档点还原多轮对话。</p>
           : <p className="gv-saves-hint">读取存档 = 按存档点切出新世界线继续（测试期旧世界线保留，不销毁）。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
@@ -1023,9 +1021,20 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const send = useSend(inputActions, draft, () => setSharedDraft(''))
 
   // ---- 文件式存档/读档 ----
-  // 手动存档:轻量落定 → 待处理清空 → api.performFileSave(history 转写+zip 导出+守卫+互斥)。
+  // 手动存档:手势内备目录 → 轻量落定 → 待处理清空 → api.performFileSave(history 转写+zip 导出+守卫+互斥)。
   const requestSave = useCallback(async () => {
     if (Array.isArray(pending) && pending.length > 0) throw new Error('请先处理完当前的问题（批准/回答）再存档')
+    // 目录/权限必须在点击手势内解决(系统选择框与 requestPermission 都要求手势):
+    // 已授权静默复用,未授权直接弹系统标准目录选择框——不再弹自定义授权面板。
+    // 这一步要在所有长异步等待(落定闸门/导出)之前,否则手势过期后必然失败。
+    let saveDir = null
+    if (typeof api?.prepareSaveDir === 'function') {
+      const prep = await api.prepareSaveDir()
+      if (prep !== null && prep !== undefined && prep.status === 'cancelled') {
+        throw new Error('已取消选择存档文件夹，本次未保存')
+      }
+      saveDir = prep !== null && prep !== undefined ? prep.dir : null
+    }
     // 闸门只在 sessions 服务可用时生效(等待回合结束+短暂静默)。
     const hasSvc = typeof api?.hasSessionsService === 'function' ? api.hasSessionsService() : false
     if (hasSvc && typeof api?.waitSettled === 'function') {
@@ -1035,6 +1044,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     if (typeof api?.performFileSave !== 'function') throw new Error('当前环境不支持文件存档')
     const result = await api.performFileSave({
       auto: false,
+      dir: saveDir,
       // 守卫与 guardBefore 同源:优先 history 转写回合数;history 不可用时回退
       // readRecord(与 performFileSave 的 fallbackLines 同一窗口采集源,回合计数
       // 口径一致,避免 history 计数与 sessionStats 计数混用导致误判 interfered)。

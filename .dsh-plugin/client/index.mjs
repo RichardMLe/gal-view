@@ -31,7 +31,7 @@ import {
   nextFileSlotId, fileSlotPrefix, isAncestorOf,
 } from './savefile.mjs'
 import {
-  fsAccessSupported, pickDirectory, resolveSaveDir, loadDirHandle, listSaveFiles,
+  fsAccessSupported, pickDirectory, resolveSaveDir, prepareSaveDir, loadDirHandle, listSaveFiles,
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
   writeSaveZip, downloadBlobFile, withTimeout,
 } from './fsaccess.mjs'
@@ -708,6 +708,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const picked = await pickDirectory()
       return picked !== null
     },
+    /** 手动存档入口专用:手势内准备存档目录(复用已授权或弹系统选择框)。
+     * 必须在点击处理器里尽早调用——requestPermission/showDirectoryPicker 脱离
+     * 用户手势会被浏览器拒绝(旧流程在导出后才解析目录,是「已授权还反复提示」
+     * 的根因)。返回 { status: 'ready'|'picked'|'cancelled'|'unsupported', dir }。 */
+    async prepareSaveDir() {
+      return prepareSaveDir()
+    },
     /** 扫描目录列出文件槽位(读每个文件头解析元数据;损坏/非本插件文件跳过)。 */
     async listFileSlots() {
       const dir = await resolveSaveDir()
@@ -750,12 +757,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
      * payload: { auto, rootTitle, sessionId, atSeq, assistantName, turns, lines,
-     *            complete, zip(Uint8Array|null), exportNote }
+     *            complete, zip(Uint8Array|null), exportNote, dir(可选,已解析句柄) }
      * 写入顺序:先 zip(官方完整日志),再 md(可读记录+元数据);md 失败回滚 zip。
      * 自动档仅保留最新:新档全部成功后清理旧自动档的 md+zip。 */
     async saveSlotFile(payload) {
       if (payload.atSeq === null || payload.atSeq === undefined) throw new Error('还没有已完成的对话,先聊两句再存档吧')
-      const dir = await resolveSaveDir()
+      const dir = payload.dir ?? await resolveSaveDir()
       const existing = dir !== null ? await listSaveFiles(dir) : []
       const ids = existing.map(slotIdFromFileName).filter(id => id !== '')
       const prefix = fileSlotPrefix(payload.rootTitle)
@@ -1062,6 +1069,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           complete: true,
           zip,
           exportNote,
+          // 手动档由调用方在手势内提前解析目录(权限/选择框只能由手势触发);
+          // 这里透传,避免 10 秒导出后脱离手势再解析被浏览器拒绝。
+          dir: opts.dir ?? null,
         })
         this.noteSaveOp()
         return { ok: true, ...result }
