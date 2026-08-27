@@ -478,6 +478,16 @@ export const CSS = `
   background: rgba(16, 20, 38, .4);
 }
 .gv-saves-dir-label { font-size: 11px; color: var(--gv-text-dim); line-height: 1.6; }
+/* 分区标题行:标题 + 右侧操作按钮(旧式存档迁移)。 */
+.gv-saves-group-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* 首次存档授权提示框。 */
+.gv-saves-auth {
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px solid rgba(197, 164, 104, .55); border-radius: 4px;
+  background: rgba(32, 49, 112, .28);
+}
+.gv-saves-auth p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: var(--gv-text); }
+.gv-saves-auth-actions { display: flex; gap: 8px; }
 .gv-saves-list {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   margin-top: 8px;

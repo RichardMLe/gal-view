@@ -31,10 +31,12 @@ import {
   nextFileSlotId, fileSlotPrefix, isAncestorOf,
 } from './savefile.mjs'
 import {
-  fsAccessSupported, pickDirectory, resolveSaveDir, listSaveFiles,
+  fsAccessSupported, pickDirectory, resolveSaveDir, loadDirHandle, listSaveFiles,
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
   writeSaveZip, downloadBlobFile,
 } from './fsaccess.mjs'
+import { wireEventsToLines } from './transcript-log.mjs'
+import { createGlobalAutoSave } from './autosave.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
 import presetScene from '../../gal-scene.json'
@@ -118,9 +120,12 @@ function createReadStore() {
 /** 场景 API 工厂：所有变更实时写 sceneSource；历史栈承载可撤销快照；素材/字体库读写 IDB。
  * sessionsSvc 可选：客户端 sessions 服务(ctx.get('sessions'))——分叉存档(SAVE=分叉、
  * LOAD=切换)依赖它；workspacesSvc 可选：工作区服务(ctx.get('workspaces'))——
- * archiveSession 在它上面(不在 sessions 上)。缺失时存档相关方法降级。 */
-function createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc) {
+ * archiveSession 在它上面(不在 sessions 上)。connectionSvc 可选：客户端连接服务
+ * (ctx.get('connection'))——官方 history RPC(captureTranscript)依赖它。缺失时相关方法降级。 */
+function createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc, connectionSvc) {
   const current = () => sceneSource.getSnapshot()
+  /** 存档互斥锁(自动/手动共用;同一时刻只有一份存档在跑)。 */
+  let saveLocked = false
 
   const commit = next => {
     sceneSource.update(next)
@@ -762,7 +767,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         + (hasZip ? '' : '官方日志导出不可用,完整记录以文本转录为准。')
       const text = buildSaveDoc({ ...payload, title, note: note === '' ? undefined : note })
       if (dir === null) {
-        // 降级:浏览器下载(Downloads)。功能可用但不在工程文件夹内。
+        if (fsAccessSupported()) {
+          // 支持但未授权:首次存档需要用户授权一次(面板引导)。
+          const error = new Error('首次存档需要授权文件夹(请点击「选择存档文件夹」)')
+          error.code = 'dir-unauthorized'
+          throw error
+        }
+        // 环境不支持:降级浏览器下载(Downloads)。
         let ok = true
         if (hasZip) ok = downloadBlobFile(zipName, payload.zip, 'application/zip') && ok
         ok = downloadTextFile(name, text) && ok
@@ -807,6 +818,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (text === null) throw new Error('存档文件已丢失(可能被移动或删除)')
       const doc = parseSaveDoc(text)
       if (doc === null) throw new Error('存档文件无法解析(格式损坏或不是本插件生成的存档)')
+      // 迁移条目(旧式槽转来):读档走原会话槽 fork 路径——槽是独立分支,
+      // fork-atSeq 无法精确锚定,绝不混用。
+      if (doc.meta.legacySlotId !== null) {
+        console.info('[gal-view:save] load-file: 迁移条目,走原会话槽读档:', doc.meta.legacySlotId)
+        const legacyResult = await this.loadSave(doc.meta.legacySlotId)
+        this.noteSaveOp()
+        return { childId: legacyResult.childId, mode: 'legacy', lines: doc.lines, title: doc.meta.title }
+      }
       const mainId = this.currentSessionId()
       if (mainId === null) throw new Error('未找到当前会话')
       const mainTitle = this.mainTitle()
@@ -873,47 +892,6 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
       return removed
     },
-    /** 把当前会话的历史整段翻页回窗口(存档采集完整记录用;loadOlder 官方分页通道)。
-     * 仅作为官方导出失败时的兜底;采集后必须调用 shrinkWindowBack 收缩窗口,
-     * 否则官方视图会渲染全部历史行导致界面卡死。 */
-    async pageFullHistory() {
-      const id = this.currentSessionId()
-      if (id === null) return
-      const session = sessionsSvc?.binding?.(id)?.session ?? null
-      if (session === null || typeof session.loadOlder !== 'function') return
-      let guard = 0
-      while (session.hasMore === true && session.loadingOlder !== true && guard < 60) {
-        guard += 1
-        try {
-          await session.loadOlder()
-        } catch (cause) {
-          console.warn('[gal-view:save] 历史回拉中断:', cause)
-          break
-        }
-      }
-      if (guard >= 60) console.warn('[gal-view:save] 历史回拉达到上限,记录可能不完整(前 3000 条内)')
-    },
-    /** 窗口收缩:官方重连同款 resync,重置窗口并重拉尾部页。
-     * 用于回拉完整历史后的恢复;运行中/有待处理交互时禁止调用(调用方保证)。 */
-    async shrinkWindowBack() {
-      const id = this.currentSessionId()
-      if (id === null) return false
-      const session = sessionsSvc?.binding?.(id)?.session ?? null
-      if (session === null) return false
-      try {
-        if (typeof session.resync === 'function') {
-          await session.resync()
-          return true
-        }
-        if (typeof session.open === 'function') {
-          await session.open()
-          return true
-        }
-      } catch (cause) {
-        console.warn('[gal-view:save] 窗口收缩失败:', cause)
-      }
-      return false
-    },
     /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
      * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
     async exportSessionLog(sessionId) {
@@ -934,6 +912,196 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       } finally {
         clearTimeout(timer)
       }
+    },
+    /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq }。
+     * 不装窗口、不增 DOM(区别于 loadOlder);服务缺失/失败返回 null。 */
+    async captureTranscript(sessionId) {
+      const wire = connectionSvc?.api
+      if (wire === null || wire === undefined || typeof wire?.sessions?.history !== 'function') return null
+      const events = []
+      let beforeSeq
+      try {
+        for (let i = 0; i < 200; i++) {
+          const response = await wire.sessions.history({
+            sessionId,
+            maxMessages: 50,
+            ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+          })
+          const value = response?.result ?? response
+          const page = Array.isArray(value?.events) ? value.events : []
+          if (page.length === 0) break
+          events.unshift(...page)
+          if (value.hasMore !== true) break
+          const first = page[0]?.event
+          if (first === null || first === undefined || typeof first.seq !== 'number') break
+          beforeSeq = first.seq
+        }
+      } catch (cause) {
+        console.warn('[gal-view:save] captureTranscript 拉取失败:', cause)
+        return null
+      }
+      return wireEventsToLines(events)
+    },
+    /** 存档互斥锁(全局:自动存档与手动存档共用)。 */
+    tryLockSave() {
+      if (saveLocked) return false
+      saveLocked = true
+      return true
+    },
+    unlockSave() {
+      saveLocked = false
+    },
+    /**
+     * 执行一次存档(全局统一入口,手动/自动共用):
+     * ① 完整转写(history RPC;不可用时回退调用方提供的窗口行);
+     * ② 后台导出官方完整日志 zip;③ 一致性守卫(guardCheck 返回的回合数/会话 id);
+     * ④ 写 zip+md(含自动档清理/回滚)。
+     * @param opts.auto - 是否自动档
+     * @param opts.guardCheck - async () => { sessionId, turns } 存档完成后的当前状态(守卫比对)
+     * @param opts.fallbackLines - captureTranscript 不可用时回退的窗口采集(null 则失败)
+     */
+    async performFileSave(opts = {}) {
+      if (!this.tryLockSave()) return { ok: false, reason: 'busy' }
+      try {
+        const sessionId = this.currentSessionId()
+        if (sessionId === null) return { ok: false, reason: 'no-session' }
+        const transcript = await this.captureTranscript(sessionId)
+        let lines
+        let turns
+        let atSeq
+        let captureNote = ''
+        if (transcript !== null) {
+          lines = transcript.lines
+          turns = transcript.turns
+          atSeq = transcript.atSeq
+        } else if (opts.fallbackLines !== null && opts.fallbackLines !== undefined) {
+          lines = opts.fallbackLines.lines
+          turns = opts.fallbackLines.turns
+          atSeq = opts.fallbackLines.atSeq
+          captureNote = 'history 接口不可用,记录为窗口转写'
+        } else {
+          return { ok: false, reason: 'capture-unavailable' }
+        }
+        if (atSeq === null) return { ok: false, reason: 'empty' }
+        const guardBefore = { sessionId, turns }
+        const rootTitle = this.mainTitle()
+        let zip = null
+        let exportNote = captureNote
+        try {
+          zip = await this.exportSessionLog(sessionId)
+        } catch (cause) {
+          console.warn('[gal-view:save] 官方日志导出失败:', cause)
+          exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
+        }
+        // 一致性守卫:存档期间对话有任何变化 → 中止,绝不产出不一致存档。
+        if (typeof opts.guardCheck === 'function') {
+          const now = await opts.guardCheck()
+          if (now === null || now.sessionId !== guardBefore.sessionId || now.turns !== guardBefore.turns) {
+            console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore, '→', now)
+            return { ok: false, reason: 'interfered' }
+          }
+        }
+        const result = await this.saveSlotFile({
+          auto: opts.auto === true,
+          rootTitle,
+          sessionId,
+          atSeq,
+          assistantName: this.assistantName?.() ?? '',
+          turns,
+          lines,
+          complete: true,
+          zip,
+          exportNote,
+        })
+        this.noteSaveOp()
+        return { ok: true, ...result }
+      } finally {
+        this.unlockSave()
+      }
+    },
+    /** 旧式槽迁移为新式文件存档(标题加"旧",md 正文用 history 转写;尽力导出 zip)。
+     * onProgress(done, total) 汇报进度;完成后清空旧槽名录(面板"旧式存档"分区消失)。 */
+    async migrateLegacySlots(onProgress) {
+      const reg = this.readSlotsRegistry()
+      const legacy = [...reg.saves, ...reg.autos]
+      if (legacy.length === 0) return { migrated: 0 }
+      const dir = await resolveSaveDir()
+      if (dir === null) {
+        const error = new Error('首次使用需要授权存档文件夹')
+        error.code = 'dir-unauthorized'
+        throw error
+      }
+      let done = 0
+      for (const slot of legacy) {
+        const id = '旧' + slot.id
+        const name = id + '.md'
+        const zipName = id + '.zip'
+        const existingMd = await readSaveFile(dir, name)
+        if (existingMd === null) {
+          const transcript = await this.captureTranscript(slot.id)
+          const lines = transcript !== null ? transcript.lines : []
+          const turns = transcript !== null ? transcript.turns : 0
+          let zip = null
+          try { zip = await this.exportSessionLog(slot.id) } catch { /* 归档槽导出失败可接受 */ }
+          const text = buildSaveDoc({
+            title: '旧' + slot.title,
+            savedAt: typeof slot.updatedAt === 'number' ? slot.updatedAt : Date.now(),
+            rootTitle: reg.rootTitle,
+            sessionId: slot.id,
+            atSeq: null,
+            assistantName: '',
+            turns,
+            auto: false,
+            legacySlotId: slot.id,
+            lines,
+            note: '由旧式会话槽迁移;读档走原会话槽路径;完整内容见同名 zip',
+          })
+          if (zip !== null) await writeSaveZip(dir, zipName, zip)
+          try {
+            await writeSaveFile(dir, name, text)
+          } catch (cause) {
+            if (zip !== null) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
+            throw cause
+          }
+          console.info('[gal-view:save] 旧档迁移:', name)
+        }
+        done += 1
+        if (typeof onProgress === 'function') onProgress(done, legacy.length)
+      }
+      reg.saves = []
+      reg.autos = []
+      this.writeSlotsRegistry(reg)
+      return { migrated: done }
+    },
+    /** 当前工程路径(会话 cwd;缺失返回空串)。 */
+    projectPath() {
+      const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const current = sessionOf(snapshot)
+      if (current === null) return ''
+      const cwd = snapshot?.byId?.[current]?.cwd
+      return typeof cwd === 'string' ? cwd : ''
+    },
+    /** 存档目录信息:{ supported, authorized, dirName, projectPath, mismatch }。
+     * dirName=已授权工程文件夹名;mismatch=授权目录与当前工程路径不一致。 */
+    async saveDirInfo() {
+      const supported = fsAccessSupported()
+      let dirName = ''
+      let authorized = false
+      if (supported) {
+        const handle = await loadDirHandle()
+        if (handle !== null && handle !== undefined) {
+          authorized = true
+          dirName = typeof handle.name === 'string' ? handle.name : ''
+        }
+      }
+      const projectPath = this.projectPath()
+      const pathBase = String(projectPath).split(/[\\/]/).filter(Boolean).pop() ?? ''
+      const mismatch = authorized && dirName !== '' && pathBase !== '' && dirName !== pathBase
+      return { supported, authorized, dirName, projectPath, mismatch }
+    },
+    /** 当前 AI 名牌(存档记录用)。 */
+    assistantName() {
+      return assistantDisplayName(sceneSource.getSnapshot())
     },
   }
 }
@@ -979,6 +1147,8 @@ export function apply(ctx) {
   const sessionsSvc = ctx.get('sessions')
   // archiveSession 在 workspaces 服务上（sessions 服务没有）；两者皆可缺省（功能降级）。
   const workspacesSvc = ctx.get('workspaces')
+  // 官方连接服务：history RPC(captureTranscript 完整转写)经它调用；缺失时降级。
+  const connectionSvc = ctx.get('connection')
 
   const storage = createStorage()
   // 素材库：IndexedDB 持久 + 内存可观察镜像（图片 dataURL 不进 localStorage）。
@@ -1052,7 +1222,13 @@ export function apply(ctx) {
   const sceneSource = createObservable(initial)
   const history = createHistory(HISTORY_LIMIT)
   const historySource = createObservable({ undo: 0, redo: 0 })
-  const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc)
+  const api = createSceneApi(sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase, sessionsSvc, workspacesSvc, connectionSvc)
+
+  // ---- 全局自动存档控制器(apply 级,不依赖 GAL 视图挂载)----
+  // 在其他窗口/皮肤下同样运行;状态发布到 autoSaveSource 供设置面板显示。
+  const autoSaveSource = createObservable({ lastAt: null, lastResult: null, lastReason: '', turns: 0, baseline: 0, every: 10 })
+  const disposeAutoSave = createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource: autoSaveSource })
+  ctx.effect(() => disposeAutoSave, 'gal-view: global autosave')
 
   // ---- 存档操作看门狗(仅记录,不干预)----
   // 官方在「当前会话被归档」时会 clear 当前选择(对话栏整个空白)。此处只记录
@@ -1130,7 +1306,7 @@ export function apply(ctx) {
         label: () => 'GAL视窗',
         store: createReadStore(),
         inject: () => ({
-          hooks: { scene: sceneSource, history: historySource, assets: assetsSource, fonts: fontsSource },
+          hooks: { scene: sceneSource, history: historySource, assets: assetsSource, fonts: fontsSource, autoSaveStatus: autoSaveSource },
           api,
         }),
       }, GalView)

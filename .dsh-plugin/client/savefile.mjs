@@ -63,6 +63,7 @@ export function buildSaveDoc(doc) {
     assistantName: String(doc.assistantName ?? ''),
     turns: Number.isFinite(doc.turns) ? Math.floor(doc.turns) : 0,
     auto: doc.auto === true,
+    legacySlotId: typeof doc.legacySlotId === 'string' && doc.legacySlotId !== '' ? doc.legacySlotId : null,
   }
   const header = '<!-- gal-view-save v1 ' + JSON.stringify(meta) + ' -->'
   const lines = Array.isArray(doc.lines) ? doc.lines : []
@@ -137,6 +138,7 @@ export function parseSaveDoc(text) {
       assistantName: typeof meta.assistantName === 'string' ? meta.assistantName : '',
       turns: Number.isFinite(meta.turns) ? Math.floor(meta.turns) : 0,
       auto: meta.auto === true,
+      legacySlotId: typeof meta.legacySlotId === 'string' && meta.legacySlotId !== '' ? meta.legacySlotId : null,
     },
     lines,
   }

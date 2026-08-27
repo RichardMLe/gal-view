@@ -117,10 +117,33 @@ const workspacesMock = {
 let openCalls = []
 let archiveCalls = []
 
+// —— 官方 history RPC 假数据(s-root:15 轮完整事件,共 60 条,分页拉取)——
+const fakeWireEvents = []
+let wireSeq = 0
+for (let t = 1; t <= 15; t++) {
+  fakeWireEvents.push({ type: 'turn/start', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
+  fakeWireEvents.push({ type: 'user/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第' + t + '问' }] } })
+  fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { blocks: [{ kind: 'text', text: '第' + t + '答' }] } })
+  fakeWireEvents.push({ type: 'turn/end', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
+}
+const historyMock = ({ sessionId, beforeSeq, maxMessages }) => {
+  const all = sessionId === 's-root' ? fakeWireEvents : []
+  let page
+  if (beforeSeq === undefined) {
+    page = all.slice(-maxMessages)
+  } else {
+    const idx = all.findIndex(e => e.seq === beforeSeq)
+    page = idx > 0 ? all.slice(Math.max(0, idx - maxMessages), idx) : []
+  }
+  const hasMore = all.length > 0 && page.length > 0 && all[0].seq < page[0].seq
+  return Promise.resolve({ result: { events: page.map(event => ({ event })), hasMore, projections: undefined } })
+}
+const connectionMock = { api: { sessions: { history: historyMock } } }
+
 // —— slots mock：真正执行 inject 回调并捕获 register 载荷 ——
 let registeredApi = null
 const ctxMock = {
-  get: name => (name === 'sessions' ? sessionsMock : name === 'workspaces' ? workspacesMock : undefined),
+  get: name => (name === 'sessions' ? sessionsMock : name === 'workspaces' ? workspacesMock : name === 'connection' ? connectionMock : undefined),
   effect: () => {},
   slots: {
     inject: (name, fn) => {
@@ -270,6 +293,41 @@ try {
   try { await registeredApi.exportSessionLog('s-root') } catch { exportThrew = true }
   if (!exportThrew) { console.error('FAIL exportSessionLog should throw without fetch'); process.exit(1) }
   console.log('exportSessionLog fallback ok')
+
+  // —— performFileSave:P2 真实总回合数(15,来自 history 转写)+ atSeq=history 尾部 seq ——
+  listCurrent = 's-root'
+  const pfs = await registeredApi.performFileSave({ auto: false, guardCheck: async () => ({ sessionId: 's-root', turns: 15 }) })
+  if (!pfs.ok) { console.error('FAIL performFileSave: ' + JSON.stringify(pfs)); process.exit(1) }
+  const pfsText = String(fakeFiles.get('深海脑-save1.md')?.content ?? '')
+  if (!pfsText.includes('第1问') || !pfsText.includes('第15答')) { console.error('FAIL performFileSave record incomplete'); process.exit(1) }
+  const pfsList = await registeredApi.listFileSlots()
+  const pfsEntry = pfsList.saves.find(s => s.id === '深海脑-save1')
+  if (pfsEntry === undefined || pfsEntry.turns !== 15) { console.error('FAIL performFileSave turns (P2): ' + JSON.stringify(pfsEntry)); process.exit(1) }
+  const forkBeforePfs = forkCalls.length
+  await registeredApi.loadSaveFile('深海脑-save1')
+  if (forkCalls[forkBeforePfs]?.atSeq !== 60) { console.error('FAIL load atSeq from history: ' + JSON.stringify(forkCalls[forkBeforePfs])); process.exit(1) }
+  console.log('performFileSave ok (turns=' + pfsEntry.turns + ', atSeq=60)')
+
+  // —— 旧式槽迁移(P4):按钮触发 → 进度 → 完成后旧槽名录清空、迁移条目并入列表 ——
+  const progress = []
+  const mig = await registeredApi.migrateLegacySlots((done, total) => progress.push([done, total]))
+  if (mig.migrated !== 2) { console.error('FAIL migrate count: ' + JSON.stringify(mig)); process.exit(1) }
+  if (progress[progress.length - 1]?.[0] !== 2 || progress[progress.length - 1]?.[1] !== 2) { console.error('FAIL migrate progress: ' + JSON.stringify(progress)); process.exit(1) }
+  if (!fakeFiles.has('旧s-new-1.md') || !fakeFiles.has('旧s-new-2.md')) { console.error('FAIL migrate files not written'); process.exit(1) }
+  const afterMig = registeredApi.saveIndex()
+  if (afterMig.saves.length !== 0 || afterMig.autos.length !== 0) { console.error('FAIL registry not cleared after migrate'); process.exit(1) }
+  const listAfterMig = await registeredApi.listFileSlots()
+  const migratedEntry = listAfterMig.saves.find(s => s.id === '旧s-new-1')
+  if (migratedEntry === undefined || migratedEntry.title !== '旧深海脑-save1') { console.error('FAIL migrated entry: ' + JSON.stringify(listAfterMig.saves.map(s => [s.id, s.title]))); process.exit(1) }
+  // 迁移条目读档:走原会话槽 fork 路径,不是 fork-atSeq 当前主线
+  listCurrent = 's-root'
+  const forkBeforeLegacyLoad = forkCalls.length
+  const legLoad = await registeredApi.loadSaveFile('旧s-new-1')
+  if (legLoad.mode !== 'legacy') { console.error('FAIL legacy routing mode: ' + JSON.stringify(legLoad)); process.exit(1) }
+  const legacyFork = forkCalls[forkCalls.length - 1]
+  if (legacyFork?.sessionId !== 's-new-1' || legacyFork.atSeq !== undefined) { console.error('FAIL legacy fork payload: ' + JSON.stringify(legacyFork)); process.exit(1) }
+  if (forkCalls.length !== forkBeforeLegacyLoad + 1) { console.error('FAIL legacy load should fork exactly once'); process.exit(1) }
+  console.log('migrate ok')
 
   // —— 改名修复(方案 C):当前会话自身标题优先 ——
   const renameSave = await registeredApi.saveSlotFile({
