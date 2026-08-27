@@ -86,9 +86,11 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       return
     }
     if (typeof api?.captureTranscript !== 'function' || typeof api?.waitSettled !== 'function' || typeof api?.performFileSave !== 'function') return
-    // 节流:检查会走一次完整 history 转写,至少间隔 10s。
+    // 节流随间隔缩放(间隔 1 → 3s;大间隔封顶 10s):检查会走一次完整 history 转写,
+    // 又要满足"每 N 轮一档",固定 10s 会把间隔=1 的连续存档合并。
+    const throttleMs = Math.max(3000, Math.min(10000, interval * 3000))
     const nowMs = Date.now()
-    if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < 10000) return
+    if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < throttleMs) return
     rec.lastCheckAt = nowMs
     rec.busy = true
     try {

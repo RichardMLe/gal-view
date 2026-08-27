@@ -1012,26 +1012,30 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           const now = await opts.guardCheck()
           return now !== null && now !== undefined && now.sessionId === guardBefore.sessionId && now.turns === guardBefore.turns
         }
-        if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
-          console.warn('[gal-view:save] 存档前会话已变化,中止:', guardBefore)
-          return { ok: false, reason: 'interfered' }
-        }
         let zip = null
         let exportNote = captureNote
-        if (opts.skipZip !== true) {
+        if (opts.skipZip === true) {
+          // 自动档:无导出(零 flush)。快照(台词+存档点)在采集瞬间即一致,
+          // 之后完成的回合不影响快照正确性——不套用守卫,否则间隔=1 时
+          // 快速连续回合会互相取消、自动档永远存不下来。
+          exportNote = (exportNote === '' ? '' : exportNote + ';') + '自动档为完整文本记录(不含官方日志 zip)'
+        } else {
+          // 手动档:导出端点在主机侧触发日志持久化屏障,导出前后各做一次守卫,
+          // 会话变化则中止(绝不产出不一致存档)。
+          if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
+            console.warn('[gal-view:save] 存档前会话已变化,中止:', guardBefore)
+            return { ok: false, reason: 'interfered' }
+          }
           try {
             zip = await this.exportSessionLog(sessionId)
           } catch (cause) {
             console.warn('[gal-view:save] 官方日志导出失败:', cause)
             exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
           }
-        } else {
-          exportNote = (exportNote === '' ? '' : exportNote + ';') + '自动档为完整文本记录(不含官方日志 zip)'
-        }
-        // 一致性守卫(导出后):存档期间对话有任何变化 → 中止,绝不产出不一致存档。
-        if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
-          console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore)
-          return { ok: false, reason: 'interfered' }
+          if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
+            console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore)
+            return { ok: false, reason: 'interfered' }
+          }
         }
         const result = await this.saveSlotFile({
           auto: opts.auto === true,

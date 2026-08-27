@@ -5553,8 +5553,9 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
       return;
     }
     if (typeof api?.captureTranscript !== "function" || typeof api?.waitSettled !== "function" || typeof api?.performFileSave !== "function") return;
+    const throttleMs = Math.max(3e3, Math.min(1e4, interval * 3e3));
     const nowMs = Date.now();
-    if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < 1e4) return;
+    if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < throttleMs) return;
     rec.lastCheckAt = nowMs;
     rec.busy = true;
     try {
@@ -6581,25 +6582,25 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           const now = await opts.guardCheck();
           return now !== null && now !== void 0 && now.sessionId === guardBefore.sessionId && now.turns === guardBefore.turns;
         };
-        if (typeof opts.guardCheck === "function" && !await checkGuard()) {
-          console.warn("[gal-view:save] \u5B58\u6863\u524D\u4F1A\u8BDD\u5DF2\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
-          return { ok: false, reason: "interfered" };
-        }
         let zip = null;
         let exportNote = captureNote;
-        if (opts.skipZip !== true) {
+        if (opts.skipZip === true) {
+          exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u81EA\u52A8\u6863\u4E3A\u5B8C\u6574\u6587\u672C\u8BB0\u5F55(\u4E0D\u542B\u5B98\u65B9\u65E5\u5FD7 zip)";
+        } else {
+          if (typeof opts.guardCheck === "function" && !await checkGuard()) {
+            console.warn("[gal-view:save] \u5B58\u6863\u524D\u4F1A\u8BDD\u5DF2\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
+            return { ok: false, reason: "interfered" };
+          }
           try {
             zip = await this.exportSessionLog(sessionId2);
           } catch (cause) {
             console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", cause);
             exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
           }
-        } else {
-          exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u81EA\u52A8\u6863\u4E3A\u5B8C\u6574\u6587\u672C\u8BB0\u5F55(\u4E0D\u542B\u5B98\u65B9\u65E5\u5FD7 zip)";
-        }
-        if (typeof opts.guardCheck === "function" && !await checkGuard()) {
-          console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
-          return { ok: false, reason: "interfered" };
+          if (typeof opts.guardCheck === "function" && !await checkGuard()) {
+            console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
+            return { ok: false, reason: "interfered" };
+          }
         }
         const result = await this.saveSlotFile({
           auto: opts.auto === true,
