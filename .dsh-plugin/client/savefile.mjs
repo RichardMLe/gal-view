@@ -155,10 +155,15 @@ export function linesToText(lines, assistantName) {
   return out.join('\n')
 }
 
-/** 文件名 → 槽位 id(去掉 .md)。 */
+/** 文件名 → 槽位 id(去掉 .md/.zip 扩展名)。
+ * .zip 也必须剥:listFileSlots 的孤儿 zip 检测用 id+'.md' 去配对 md 文件,
+ * 不剥 .zip 会把「存档名.zip」误判成没有配对的孤立日志(存档自己的日志
+ * 备份被报成「无法识别」)——用户实测 bug。 */
 export function slotIdFromFileName(name) {
   const value = String(name ?? '')
-  return value.toLowerCase().endsWith('.md') ? value.slice(0, -3) : value
+  if (value.toLowerCase().endsWith('.md')) return value.slice(0, -3)
+  if (value.toLowerCase().endsWith('.zip')) return value.slice(0, -4)
+  return value
 }
 
 /** 目录文件名 → 是否匹配某前缀的手动/自动存档,返回 { id, n, auto } 或 null。 */

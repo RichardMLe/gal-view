@@ -290,6 +290,8 @@ try {
   })
   if (withZip.id !== '深海脑-save1') { console.error('FAIL zip save id: ' + JSON.stringify(withZip)); process.exit(1) }
   if (!fakeFiles.has('深海脑-save1.md') || !fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip+md pair not written'); process.exit(1) }
+  const withZipList = await registeredApi.listFileSlots()
+  if (withZipList.broken.some(b => String(b).includes('深海脑-save1.zip'))) { console.error('FAIL paired zip flagged broken: ' + JSON.stringify(withZipList.broken)); process.exit(1) }
   const withZipRemoved = await registeredApi.deleteSlotFile(withZip.id)
   if (!withZipRemoved || fakeFiles.has('深海脑-save1.md') || fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip pair delete'); process.exit(1) }
   console.log('zip pair ok')

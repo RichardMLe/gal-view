@@ -66,8 +66,12 @@ test('linesToText 角色标记输出(缺省 assistantName 用 AI)', () => {
 test('slotIdFromFileName / slotFromFileName 识别槽位文件', () => {
   assert.equal(slotIdFromFileName('深海脑-save1.md'), '深海脑-save1')
   assert.equal(slotIdFromFileName('a.md'), 'a')
+  // .zip 也必须剥:否则「存档名.zip」会被孤儿检测误判成孤立日志
+  assert.equal(slotIdFromFileName('深海脑-save1.zip'), '深海脑-save1')
+  assert.equal(slotIdFromFileName('深海脑-自动2.ZIP'), '深海脑-自动2')
   assert.deepEqual(slotFromFileName('深海脑-save12.md', '深海脑'), { id: '深海脑-save12', n: 12, auto: false })
   assert.deepEqual(slotFromFileName('深海脑-自动2.md', '深海脑'), { id: '深海脑-自动2', n: 2, auto: true })
+  assert.deepEqual(slotFromFileName('深海脑-自动2.zip', '深海脑'), { id: '深海脑-自动2', n: 2, auto: true })
   assert.equal(slotFromFileName('别的-save1.md', '深海脑'), null)
   assert.equal(slotFromFileName('notes.md', '深海脑'), null)
 })
