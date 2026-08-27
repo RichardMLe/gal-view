@@ -162,30 +162,8 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
           onChange={e => api.updateSettings({ archiveOldOnLoad: e.target.checked })}
         />
       </label>
-      <p className="gv-settings-hint">每完成 N 次对话自动创建「自动」存档（0 = 关闭）；自动存档仅保留最新一个。存档保存为工程目录 .gal-view-saves 下的文件（首次使用请在存档面板选择工程文件夹）；读档按存档点还原多轮对话。读档后是否把旧世界线归档（从列表隐藏、可恢复）由上方的「读档后归档旧对话」开关控制，默认关闭——旧对话保留在工作区列表，可随时切回对比。</p>
-      {(typeof scene.settings.autoSaveEvery === 'number' && scene.settings.autoSaveEvery > 0 && scene.settings.autoSaveEvery <= 2) && (
-        <p className="gv-settings-hint">提示：间隔过小会频繁导出完整日志，建议 ≥5（仅建议，不强制）。</p>
-      )}
-      {autoSaveStatus !== null && autoSaveStatus !== undefined && (
-        <p className="gv-settings-hint">
-          自动存档状态：
-          {autoSaveStatus.lastResult === null || autoSaveStatus.lastResult === undefined
-            ? '尚未触发'
-            : autoSaveStatus.lastResult === 'ok'
-              ? '上次成功 ' + formatTime(autoSaveStatus.lastAt)
-              : '上次 ' + String(autoSaveStatus.lastResult) + (autoSaveStatus.lastReason !== '' ? '（' + String(autoSaveStatus.lastReason) + '）' : '')}
-          {typeof autoSaveStatus.every === 'number' && autoSaveStatus.every > 0
-            ? ' · 回合 ' + (autoSaveStatus.turns ?? 0) + ' / 基线 ' + (autoSaveStatus.baseline ?? 0) + ' / 间隔 ' + autoSaveStatus.every + '（距下次还需 ' + Math.max(0, autoSaveStatus.every - Math.max(0, (autoSaveStatus.turns ?? 0) - (autoSaveStatus.baseline ?? 0))) + ' 轮）'
-            : ''}
-        </p>
-      )}
-      <label className="gv-settings-row">
-        <span>自动存档测试</span>
-        <button type="button" className="gv-btn" disabled={testing} onClick={runTestAutoSave}>
-          {testing ? '测试中…' : '立即存档一次'}
-        </button>
-      </label>
-      {testResult !== null && <p className="gv-settings-hint">{testResult}</p>}
+      {/* 以下开发期诊断 UI(自动存档状态/立即存档一次/说明文案)已按要求从界面隐藏,
+          测试代码保留:runTestAutoSave/testing/testResult/autoSaveStatus 仍在,需要时恢复渲染即可。 */}
     </div>
   )
 }
@@ -448,9 +426,6 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
             {picking ? '选择中…' : (dirInfo !== null && dirInfo.authorized === true ? '重新选择' : '选择存档文件夹')}
           </button>
         </div>
-        {mode === 'save'
-          ? <p className="gv-saves-hint">存档 = 把当前对话完整复制进工程 .gal-view-saves 文件夹：官方完整日志 zip + 可读记录 md（永久保存，读档不会改变它）；存档期间请勿继续对话，读档按存档点还原多轮对话。</p>
-          : <p className="gv-saves-hint">读取存档 = 按存档点切出新世界线继续（测试期旧世界线保留，不销毁）。{running === true ? '当前回复尚未完成，请等它结束后再读取。' : ''}</p>}
         <div className="gv-saves-list">
           <div className="gv-saves-group">自动存档（文件）</div>
           {index !== null && index.autos.length > 0
