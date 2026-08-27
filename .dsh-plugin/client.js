@@ -4100,6 +4100,8 @@ function HistoryPanel({ scene, lines, onClose }) {
 }
 function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
   const beforeRef = (0, import_react4.useRef)(null);
+  const [testing, setTesting] = (0, import_react4.useState)(false);
+  const [testResult, setTestResult] = (0, import_react4.useState)(null);
   (0, import_react4.useEffect)(() => {
     beforeRef.current = api.snapshotScene();
     const onKey = (e) => {
@@ -4114,6 +4116,28 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
       }
     };
   }, [api, onClose]);
+  const runTestAutoSave = async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult("\u6B63\u5728\u6D4B\u8BD5\u81EA\u52A8\u5B58\u6863\u2026");
+    try {
+      if (typeof api?.performFileSave !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5B58\u6863");
+      const result = await api.performFileSave({
+        auto: true,
+        skipZip: true,
+        guardCheck: async () => {
+          const id = api.currentSessionId();
+          const t = typeof api?.captureTranscript === "function" ? await api.captureTranscript(id) : null;
+          return { sessionId: id, turns: t !== null ? t.turns : null };
+        }
+      });
+      if (result.ok) setTestResult("\u6D4B\u8BD5\u6210\u529F:\u5DF2\u521B\u5EFA\u81EA\u52A8\u6863\u300C" + result.title + "\u300D(\u5DE5\u7A0B .gal-view-saves)");
+      else setTestResult("\u6D4B\u8BD5\u672A\u6210\u529F,\u539F\u56E0:" + String(result.reason ?? "\u672A\u77E5"));
+    } catch (cause) {
+      setTestResult("\u6D4B\u8BD5\u5931\u8D25:" + causeText2(cause));
+    }
+    setTesting(false);
+  };
   const characters = scene.elements.filter((el) => el.type === "character" && el.character);
   return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-settings", role: "dialog", "aria-label": "\u8BBE\u7F6E" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-settings-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, "\u8BBE\u7F6E"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("label", { className: "gv-settings-row" }, /* @__PURE__ */ import_react4.default.createElement("span", null, "\u8BF4\u8BDD\u89D2\u8272"), /* @__PURE__ */ import_react4.default.createElement(
     "select",
@@ -4143,7 +4167,7 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
         if (Number.isFinite(n)) api.updateSettings({ autoSaveEvery: Math.min(100, Math.max(0, n)) });
       }
     }
-  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5B58\u6863\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5B58\u6863\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u5B58\u6863\u4FDD\u5B58\u4E3A\u5DE5\u7A0B\u76EE\u5F55 .gal-view-saves \u4E0B\u7684\u6587\u4EF6\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u5728\u5B58\u6863\u9762\u677F\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09\uFF1B\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\uFF0C\u6D4B\u8BD5\u671F\u65E7\u5BF9\u8BDD\u4FDD\u7559\u4E0D\u9500\u6BC1\u3002"), typeof scene.settings.autoSaveEvery === "number" && scene.settings.autoSaveEvery > 0 && scene.settings.autoSaveEvery <= 2 && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u63D0\u793A\uFF1A\u95F4\u9694\u8FC7\u5C0F\u4F1A\u9891\u7E41\u5BFC\u51FA\u5B8C\u6574\u65E5\u5FD7\uFF0C\u5EFA\u8BAE \u22655\uFF08\u4EC5\u5EFA\u8BAE\uFF0C\u4E0D\u5F3A\u5236\uFF09\u3002"), autoSaveStatus !== null && autoSaveStatus !== void 0 && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u81EA\u52A8\u5B58\u6863\u72B6\u6001\uFF1A", autoSaveStatus.lastResult === null || autoSaveStatus.lastResult === void 0 ? "\u5C1A\u672A\u89E6\u53D1" : autoSaveStatus.lastResult === "ok" ? "\u4E0A\u6B21\u6210\u529F " + formatTime(autoSaveStatus.lastAt) : "\u4E0A\u6B21 " + String(autoSaveStatus.lastResult) + (autoSaveStatus.lastReason !== "" ? "\uFF08" + String(autoSaveStatus.lastReason) + "\uFF09" : ""), typeof autoSaveStatus.every === "number" && autoSaveStatus.every > 0 ? " \xB7 \u8FDB\u5EA6 " + Math.max(0, (autoSaveStatus.turns ?? 0) - (autoSaveStatus.baseline ?? 0)) + "/" + autoSaveStatus.every : ""));
+  )), /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u6BCF\u5B8C\u6210 N \u6B21\u5BF9\u8BDD\u81EA\u52A8\u521B\u5EFA\u300C\u81EA\u52A8\u300D\u5B58\u6863\uFF080 = \u5173\u95ED\uFF09\uFF1B\u81EA\u52A8\u5B58\u6863\u4EC5\u4FDD\u7559\u6700\u65B0\u4E00\u4E2A\u3002\u5B58\u6863\u4FDD\u5B58\u4E3A\u5DE5\u7A0B\u76EE\u5F55 .gal-view-saves \u4E0B\u7684\u6587\u4EF6\uFF08\u9996\u6B21\u4F7F\u7528\u8BF7\u5728\u5B58\u6863\u9762\u677F\u9009\u62E9\u5DE5\u7A0B\u6587\u4EF6\u5939\uFF09\uFF1B\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\uFF0C\u6D4B\u8BD5\u671F\u65E7\u5BF9\u8BDD\u4FDD\u7559\u4E0D\u9500\u6BC1\u3002"), typeof scene.settings.autoSaveEvery === "number" && scene.settings.autoSaveEvery > 0 && scene.settings.autoSaveEvery <= 2 && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u63D0\u793A\uFF1A\u95F4\u9694\u8FC7\u5C0F\u4F1A\u9891\u7E41\u5BFC\u51FA\u5B8C\u6574\u65E5\u5FD7\uFF0C\u5EFA\u8BAE \u22655\uFF08\u4EC5\u5EFA\u8BAE\uFF0C\u4E0D\u5F3A\u5236\uFF09\u3002"), autoSaveStatus !== null && autoSaveStatus !== void 0 && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, "\u81EA\u52A8\u5B58\u6863\u72B6\u6001\uFF1A", autoSaveStatus.lastResult === null || autoSaveStatus.lastResult === void 0 ? "\u5C1A\u672A\u89E6\u53D1" : autoSaveStatus.lastResult === "ok" ? "\u4E0A\u6B21\u6210\u529F " + formatTime(autoSaveStatus.lastAt) : "\u4E0A\u6B21 " + String(autoSaveStatus.lastResult) + (autoSaveStatus.lastReason !== "" ? "\uFF08" + String(autoSaveStatus.lastReason) + "\uFF09" : ""), typeof autoSaveStatus.every === "number" && autoSaveStatus.every > 0 ? " \xB7 \u56DE\u5408 " + (autoSaveStatus.turns ?? 0) + " / \u57FA\u7EBF " + (autoSaveStatus.baseline ?? 0) + " / \u95F4\u9694 " + autoSaveStatus.every + "\uFF08\u8DDD\u4E0B\u6B21\u8FD8\u9700 " + Math.max(0, autoSaveStatus.every - Math.max(0, (autoSaveStatus.turns ?? 0) - (autoSaveStatus.baseline ?? 0))) + " \u8F6E\uFF09" : ""), /* @__PURE__ */ import_react4.default.createElement("label", { className: "gv-settings-row" }, /* @__PURE__ */ import_react4.default.createElement("span", null, "\u81EA\u52A8\u5B58\u6863\u6D4B\u8BD5"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: testing, onClick: runTestAutoSave }, testing ? "\u6D4B\u8BD5\u4E2D\u2026" : "\u7ACB\u5373\u5B58\u6863\u4E00\u6B21")), testResult !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-settings-hint" }, testResult));
 }
 function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   const [index, setIndex] = (0, import_react4.useState)(null);
@@ -6485,11 +6509,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let beforeSeq;
       try {
         for (let i = 0; i < 200; i++) {
-          const response = await wire.sessions.history({
+          const response = await withTimeout(wire.sessions.history({
             sessionId: sessionId2,
             maxMessages: 50,
             ...beforeSeq !== void 0 ? { beforeSeq } : {}
-          });
+          }), 15e3, void 0);
+          if (response === void 0) throw new Error("history \u8BF7\u6C42\u8D85\u65F6");
           const value = response?.result ?? response;
           const page = Array.isArray(value?.events) ? value.events : [];
           if (page.length === 0) break;

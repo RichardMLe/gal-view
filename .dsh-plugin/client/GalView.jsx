@@ -68,6 +68,8 @@ function HistoryPanel({ scene, lines, onClose }) {
 /** 设置浮层：说话角色 / 玩家名 / 打字速度。开时快照、关时提交历史。 */
 function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
   const beforeRef = useRef(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
   useEffect(() => {
     beforeRef.current = api.snapshotScene()
     const onKey = e => { if (e.key === 'Escape') onClose() }
@@ -80,6 +82,29 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
       }
     }
   }, [api, onClose])
+  // 诊断:单步执行自动存档全流程,结果直接显示(定位"不生效"卡在哪一步)。
+  const runTestAutoSave = async () => {
+    if (testing) return
+    setTesting(true)
+    setTestResult('正在测试自动存档…')
+    try {
+      if (typeof api?.performFileSave !== 'function') throw new Error('当前环境不支持存档')
+      const result = await api.performFileSave({
+        auto: true,
+        skipZip: true,
+        guardCheck: async () => {
+          const id = api.currentSessionId()
+          const t = typeof api?.captureTranscript === 'function' ? await api.captureTranscript(id) : null
+          return { sessionId: id, turns: t !== null ? t.turns : null }
+        },
+      })
+      if (result.ok) setTestResult('测试成功:已创建自动档「' + result.title + '」(工程 .gal-view-saves)')
+      else setTestResult('测试未成功,原因:' + String(result.reason ?? '未知'))
+    } catch (cause) {
+      setTestResult('测试失败:' + causeText(cause))
+    }
+    setTesting(false)
+  }
   const characters = scene.elements.filter(el => el.type === 'character' && el.character)
   return (
     <div className="gv-settings" role="dialog" aria-label="设置">
@@ -142,10 +167,17 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
               ? '上次成功 ' + formatTime(autoSaveStatus.lastAt)
               : '上次 ' + String(autoSaveStatus.lastResult) + (autoSaveStatus.lastReason !== '' ? '（' + String(autoSaveStatus.lastReason) + '）' : '')}
           {typeof autoSaveStatus.every === 'number' && autoSaveStatus.every > 0
-            ? ' · 进度 ' + Math.max(0, (autoSaveStatus.turns ?? 0) - (autoSaveStatus.baseline ?? 0)) + '/' + autoSaveStatus.every
+            ? ' · 回合 ' + (autoSaveStatus.turns ?? 0) + ' / 基线 ' + (autoSaveStatus.baseline ?? 0) + ' / 间隔 ' + autoSaveStatus.every + '（距下次还需 ' + Math.max(0, autoSaveStatus.every - Math.max(0, (autoSaveStatus.turns ?? 0) - (autoSaveStatus.baseline ?? 0))) + ' 轮）'
             : ''}
         </p>
       )}
+      <label className="gv-settings-row">
+        <span>自动存档测试</span>
+        <button type="button" className="gv-btn" disabled={testing} onClick={runTestAutoSave}>
+          {testing ? '测试中…' : '立即存档一次'}
+        </button>
+      </label>
+      {testResult !== null && <p className="gv-settings-hint">{testResult}</p>}
     </div>
   )
 }

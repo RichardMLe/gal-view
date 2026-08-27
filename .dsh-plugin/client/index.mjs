@@ -939,11 +939,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let beforeSeq
       try {
         for (let i = 0; i < 200; i++) {
-          const response = await wire.sessions.history({
+          const response = await withTimeout(wire.sessions.history({
             sessionId,
             maxMessages: 50,
             ...(beforeSeq !== undefined ? { beforeSeq } : {}),
-          })
+          }), 15000, undefined)
+          if (response === undefined) throw new Error('history 请求超时')
           const value = response?.result ?? response
           const page = Array.isArray(value?.events) ? value.events : []
           if (page.length === 0) break
