@@ -108,6 +108,9 @@ const sessionsMock = {
   binding: id => ({
     session: {
       rename: title => { renameCalls.push([id, title]); return Promise.resolve({ ok: true }) },
+      // 窗口事件数组(完整性检查用):s-root 的窗口尾部 seq 可注入,模拟被截断。
+      events: id === 's-root' ? [{ seq: windowTailSeq, type: 'turn/end', time: 0, data: {} }] : [],
+      resync: () => { resyncCalls.push(id); return Promise.resolve() },
     },
   }),
 }
@@ -116,6 +119,8 @@ const workspacesMock = {
 }
 let openCalls = []
 let archiveCalls = []
+let resyncCalls = []
+let windowTailSeq = 60
 
 // —— 官方 history RPC 假数据(s-root:15 轮完整事件,共 60 条,分页拉取)——
 const fakeWireEvents = []
@@ -317,6 +322,18 @@ try {
   if (!pfsAutoText.includes('第15答')) { console.error('FAIL skipZip record incomplete'); process.exit(1) }
   if (fakeFiles.has(pfsAuto.id + '.zip')) { console.error('FAIL skipZip must not write zip'); process.exit(1) }
   console.log('skipZip ok:', pfsAuto.id)
+
+  // —— 对话栏完整性检查:窗口尾部落后持久日志 >8 → 自动 resync 恢复 ——
+  listCurrent = 's-root'
+  windowTailSeq = 60
+  const intactBefore = resyncCalls.length
+  const intactResult = await registeredApi.checkConversationIntegrity()
+  if (intactResult !== false || resyncCalls.length !== intactBefore) { console.error('FAIL integrity: healthy window should not resync'); process.exit(1) }
+  windowTailSeq = 20
+  const brokenResult = await registeredApi.checkConversationIntegrity()
+  if (brokenResult !== true || !resyncCalls.includes('s-root')) { console.error('FAIL integrity: truncated window should resync'); process.exit(1) }
+  windowTailSeq = 60
+  console.log('conversation integrity check ok')
 
   // —— 旧式槽迁移(P4):按钮触发 → 进度 → 完成后旧槽名录清空、迁移条目并入列表 ——
   const progress = []

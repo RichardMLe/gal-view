@@ -6230,6 +6230,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         console.info("[gal-view:save] load: \u6D4B\u8BD5\u671F\u4E0D\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", oldCurrent);
       }
       this.noteSaveOp();
+      void this.checkConversationIntegrity();
       return { childId };
     },
     /** LOAD：切换到指定会话（读档）。 */
@@ -6377,6 +6378,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         console.info("[gal-view:save] load-file: \u8FC1\u79FB\u6761\u76EE,\u8D70\u539F\u4F1A\u8BDD\u69FD\u8BFB\u6863:", doc.meta.legacySlotId);
         const legacyResult = await this.loadSave(doc.meta.legacySlotId);
         this.noteSaveOp();
+        void this.checkConversationIntegrity();
         return { childId: legacyResult.childId, mode: "legacy", lines: doc.lines, title: doc.meta.title };
       }
       const mainId = this.currentSessionId();
@@ -6415,6 +6417,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           console.info("[gal-view:save] load-file: \u6D4B\u8BD5\u671F\u4E0D\u5F52\u6863\u65E7\u7EBF(\u65E7\u7EBF\u4FDD\u7559\u5728\u5DE5\u4F5C\u533A):", mainId);
         }
         this.noteSaveOp();
+        void this.checkConversationIntegrity();
         return { childId, mode: "fork", lines: doc.lines, title: doc.meta.title };
       } catch (cause) {
         console.warn("[gal-view:save] load-file: fork \u8FD8\u539F\u5931\u8D25,\u964D\u7EA7\u4E3A\u5185\u5BB9\u7EA7\u8FD8\u539F:", cause);
@@ -6425,6 +6428,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         await sessionsSvc.open(createdId);
         const recordText = linesToText(doc.lines, doc.meta.assistantName);
         this.noteSaveOp();
+        void this.checkConversationIntegrity();
         return { childId: createdId, mode: "inject", lines: doc.lines, title: doc.meta.title, recordText };
       }
     },
@@ -6588,6 +6592,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         return { ok: true, ...result };
       } finally {
         this.unlockSave();
+        void this.checkConversationIntegrity();
       }
     },
     /** 旧式槽迁移为新式文件存档(标题加"旧",md 正文用 history 转写;尽力导出 zip)。
@@ -6650,6 +6655,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       reg.saves = [];
       reg.autos = [];
       this.writeSlotsRegistry(reg);
+      void this.checkConversationIntegrity();
       return { migrated: done };
     },
     /** 当前工程路径(会话 cwd;缺失返回空串)。 */
@@ -6681,6 +6687,36 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     /** 当前 AI 名牌(存档记录用)。 */
     assistantName() {
       return assistantDisplayName(sceneSource.getSnapshot());
+    },
+    /** 对话栏完整性检查(操作后自动调用):官方窗口可能因瞬时序列断档被重装成
+     * 不完整尾部(早前对话从「对话」栏消失)。比对持久日志尾部 seq 与窗口尾部 seq,
+     * 差距过大且会话已落定时自动 resync 重装窗口(官方重连原语)。
+     * 返回 true 表示执行了恢复。 */
+    async checkConversationIntegrity() {
+      const id = this.currentSessionId();
+      if (id === null) return false;
+      const listSnap = sessionsSvc?.list?.getSnapshot?.() ?? null;
+      const entry = listSnap !== null && listSnap.byId?.[id] !== void 0 ? listSnap.byId[id] : null;
+      if (entry?.running === true) return false;
+      const session = sessionsSvc?.binding?.(id)?.session ?? null;
+      if (session === null) return false;
+      try {
+        const transcript = await this.captureTranscript(id);
+        if (transcript === null || transcript.atSeq === null) return false;
+        const events = Array.isArray(session.events) ? session.events : null;
+        const windowTail = events !== null && events.length > 0 && typeof events[events.length - 1]?.seq === "number" ? events[events.length - 1].seq : null;
+        if (windowTail === null) return false;
+        if (transcript.atSeq - windowTail > 8) {
+          console.warn("[gal-view:watchdog] \u68C0\u6D4B\u5230\u5BF9\u8BDD\u7A97\u53E3\u88AB\u622A\u65AD(\u6301\u4E45\u5C3E\u90E8 " + transcript.atSeq + " vs \u7A97\u53E3\u5C3E\u90E8 " + windowTail + "),\u81EA\u52A8\u91CD\u88C5\u7A97\u53E3\u6062\u590D");
+          if (typeof session.resync === "function") {
+            await session.resync();
+            return true;
+          }
+        }
+      } catch (cause) {
+        console.warn("[gal-view:watchdog] \u5B8C\u6574\u6027\u68C0\u67E5\u5931\u8D25:", cause);
+      }
+      return false;
     }
   };
 }

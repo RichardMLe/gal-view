@@ -679,6 +679,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         console.info('[gal-view:save] load: 测试期不归档旧线(旧线保留在工作区):', oldCurrent)
       }
       this.noteSaveOp()
+      void this.checkConversationIntegrity()
       return { childId }
     },
     /** LOAD：切换到指定会话（读档）。 */
@@ -824,6 +825,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         console.info('[gal-view:save] load-file: 迁移条目,走原会话槽读档:', doc.meta.legacySlotId)
         const legacyResult = await this.loadSave(doc.meta.legacySlotId)
         this.noteSaveOp()
+        void this.checkConversationIntegrity()
         return { childId: legacyResult.childId, mode: 'legacy', lines: doc.lines, title: doc.meta.title }
       }
       const mainId = this.currentSessionId()
@@ -868,6 +870,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           console.info('[gal-view:save] load-file: 测试期不归档旧线(旧线保留在工作区):', mainId)
         }
         this.noteSaveOp()
+        void this.checkConversationIntegrity()
         return { childId, mode: 'fork', lines: doc.lines, title: doc.meta.title }
       } catch (cause) {
         console.warn('[gal-view:save] load-file: fork 还原失败,降级为内容级还原:', cause)
@@ -878,6 +881,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         await sessionsSvc.open(createdId)
         const recordText = linesToText(doc.lines, doc.meta.assistantName)
         this.noteSaveOp()
+        void this.checkConversationIntegrity()
         return { childId: createdId, mode: 'inject', lines: doc.lines, title: doc.meta.title, recordText }
       }
     },
@@ -1044,6 +1048,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         return { ok: true, ...result }
       } finally {
         this.unlockSave()
+        // 操作后检查对话窗口完整性(被官方重装截断时自动恢复)。
+        void this.checkConversationIntegrity()
       }
     },
     /** 旧式槽迁移为新式文件存档(标题加"旧",md 正文用 history 转写;尽力导出 zip)。
@@ -1098,6 +1104,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       reg.saves = []
       reg.autos = []
       this.writeSlotsRegistry(reg)
+      void this.checkConversationIntegrity()
       return { migrated: done }
     },
     /** 当前工程路径(会话 cwd;缺失返回空串)。 */
@@ -1129,6 +1136,38 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     /** 当前 AI 名牌(存档记录用)。 */
     assistantName() {
       return assistantDisplayName(sceneSource.getSnapshot())
+    },
+    /** 对话栏完整性检查(操作后自动调用):官方窗口可能因瞬时序列断档被重装成
+     * 不完整尾部(早前对话从「对话」栏消失)。比对持久日志尾部 seq 与窗口尾部 seq,
+     * 差距过大且会话已落定时自动 resync 重装窗口(官方重连原语)。
+     * 返回 true 表示执行了恢复。 */
+    async checkConversationIntegrity() {
+      const id = this.currentSessionId()
+      if (id === null) return false
+      const listSnap = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const entry = listSnap !== null && listSnap.byId?.[id] !== undefined ? listSnap.byId[id] : null
+      if (entry?.running === true) return false
+      const session = sessionsSvc?.binding?.(id)?.session ?? null
+      if (session === null) return false
+      try {
+        const transcript = await this.captureTranscript(id)
+        if (transcript === null || transcript.atSeq === null) return false
+        const events = Array.isArray(session.events) ? session.events : null
+        const windowTail = events !== null && events.length > 0 && typeof events[events.length - 1]?.seq === 'number'
+          ? events[events.length - 1].seq
+          : null
+        if (windowTail === null) return false
+        if (transcript.atSeq - windowTail > 8) {
+          console.warn('[gal-view:watchdog] 检测到对话窗口被截断(持久尾部 ' + transcript.atSeq + ' vs 窗口尾部 ' + windowTail + '),自动重装窗口恢复')
+          if (typeof session.resync === 'function') {
+            await session.resync()
+            return true
+          }
+        }
+      } catch (cause) {
+        console.warn('[gal-view:watchdog] 完整性检查失败:', cause)
+      }
+      return false
     },
   }
 }
