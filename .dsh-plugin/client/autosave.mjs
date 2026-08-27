@@ -55,9 +55,11 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     if (typeof api?.captureTranscript === 'function') {
       try {
         const transcript = await api.captureTranscript(id)
-        if (transcript !== null && typeof transcript.turns === 'number') {
+        if (transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number') {
           const rec = perSession.get(id)
           if (rec !== null && rec !== undefined) rec.turns = transcript.turns
+        } else if (transcript !== null && transcript !== undefined) {
+          publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录:' + String(transcript.error ?? '未知') })
         }
       } catch {
         // 忽略:history 不可用时转写计数不可用(自动存档降级为不触发)。
@@ -97,9 +99,9 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       // 以官方 history 转写为唯一计数来源(与存档内容同源、真实总回合数,
       // 不依赖列表 running 跃迁信号)。
       const transcript = await api.captureTranscript(id)
-      const turns = transcript !== null && typeof transcript.turns === 'number' ? transcript.turns : null
+      const turns = transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number' ? transcript.turns : null
       if (turns === null) {
-        publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录' })
+        publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录' + (transcript !== null && transcript !== undefined && transcript.error !== null ? ':' + String(transcript.error) : '') })
         return
       }
       rec.turns = turns
@@ -137,7 +139,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
         skipZip: true,
         guardCheck: async () => {
           const t2 = await api.captureTranscript(id)
-          return { sessionId: id, turns: t2 !== null ? t2.turns : null }
+          return { sessionId: id, turns: t2 !== null && t2 !== undefined && t2.error === null ? t2.turns : null }
         },
       })
       if (result.ok) {

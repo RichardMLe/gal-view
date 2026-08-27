@@ -930,11 +930,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         clearTimeout(timer)
       }
     },
-    /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq }。
-     * 不装窗口、不增 DOM(区别于 loadOlder);服务缺失/失败返回 null。 */
+    /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq, error }。
+     * 不装窗口、不增 DOM(区别于 loadOlder)。失败时 error 携带可读原因(不返回 null),
+     * 供界面直接显示定位。 */
     async captureTranscript(sessionId) {
       const wire = connectionSvc?.api
-      if (wire === null || wire === undefined || typeof wire?.sessions?.history !== 'function') return null
+      if (wire === null || wire === undefined || typeof wire?.sessions?.history !== 'function') {
+        return { lines: [], turns: 0, atSeq: null, error: 'history 接口不可用(connection 服务缺失)' }
+      }
       const events = []
       let beforeSeq
       try {
@@ -956,9 +959,10 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         }
       } catch (cause) {
         console.warn('[gal-view:save] captureTranscript 拉取失败:', cause)
-        return null
+        return { lines: [], turns: 0, atSeq: null, error: String(cause?.message ?? cause) }
       }
-      return wireEventsToLines(events)
+      const result = wireEventsToLines(events)
+      return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, error: null }
     },
     /** 存档互斥锁(全局:自动存档与手动存档共用)。 */
     tryLockSave() {
@@ -992,7 +996,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         let turns
         let atSeq
         let captureNote = ''
-        if (transcript !== null) {
+        if (transcript.error === null) {
           lines = transcript.lines
           turns = transcript.turns
           atSeq = transcript.atSeq
@@ -1000,11 +1004,18 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           lines = opts.fallbackLines.lines
           turns = opts.fallbackLines.turns
           atSeq = opts.fallbackLines.atSeq
-          captureNote = 'history 接口不可用,记录为窗口转写'
+          captureNote = 'history 接口不可用(' + transcript.error + '),记录为窗口转写'
         } else {
-          return { ok: false, reason: 'capture-unavailable' }
+          return { ok: false, reason: 'capture-unavailable: ' + transcript.error }
         }
-        if (atSeq === null) return { ok: false, reason: 'empty' }
+        if (atSeq === null) {
+          // history 转写失败且窗口回退也没有存档点时,把真实原因透传给界面,
+          // 而不是一律伪装成「还没有已完成对话」——那是用户反复看到误导提示的根源。
+          if (transcript.error !== null) {
+            return { ok: false, reason: 'empty;history 转写不可用(' + transcript.error + ')且窗口转写无存档点' }
+          }
+          return { ok: false, reason: 'empty' }
+        }
         const guardBefore = { sessionId, turns }
         const rootTitle = this.mainTitle()
         // 一致性守卫(导出前):若会话已变化,根本不去碰导出端点。
@@ -1077,8 +1088,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         const existingMd = await readSaveFile(dir, name)
         if (existingMd === null) {
           const transcript = await this.captureTranscript(slot.id)
-          const lines = transcript !== null ? transcript.lines : []
-          const turns = transcript !== null ? transcript.turns : 0
+          const lines = transcript.error === null ? transcript.lines : []
+          const turns = transcript.error === null ? transcript.turns : 0
           let zip = null
           try { zip = await this.exportSessionLog(slot.id) } catch { /* 归档槽导出失败可接受 */ }
           const text = buildSaveDoc({
@@ -1156,7 +1167,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (session === null) return false
       try {
         const transcript = await this.captureTranscript(id)
-        if (transcript === null || transcript.atSeq === null) return false
+        if (transcript.error !== null || transcript.atSeq === null) return false
         const events = Array.isArray(session.events) ? session.events : null
         const windowTail = events !== null && events.length > 0 && typeof events[events.length - 1]?.seq === 'number'
           ? events[events.length - 1].seq

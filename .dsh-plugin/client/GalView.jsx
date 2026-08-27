@@ -95,7 +95,7 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
         guardCheck: async () => {
           const id = api.currentSessionId()
           const t = typeof api?.captureTranscript === 'function' ? await api.captureTranscript(id) : null
-          return { sessionId: id, turns: t !== null ? t.turns : null }
+          return { sessionId: id, turns: t !== null && t !== undefined && t.error === null ? t.turns : null }
         },
       })
       if (result.ok) setTestResult('测试成功:已创建自动档「' + result.title + '」(工程 .gal-view-saves)')
@@ -602,6 +602,7 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const runningCalls = useSession(s => s.runningCalls)
   const pending = useSession(s => s.pending)
   const promptError = useSession(s => s.promptError)
+  const turnEnds = useSession(s => s.turnEnds)
   // 自动存档状态(apply 级全局源)。必须在顶层无条件调用:条件调用 hook 会破坏
   // hook 顺序,设置面板打开时(settingsOpen 翻转)直接崩溃。
   const autoSaveStatusSnapshot = typeof useAutoSaveStatus === 'function' ? useAutoSaveStatus(s => s) : null
@@ -640,26 +641,33 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
   const displayLines = (lines.length > 0 || restoredLines === null || restoredLines.length === 0) ? lines : restoredLines
   const lastLine = displayLines.length > 0 ? displayLines[displayLines.length - 1] : null
   // ---- 存档支持(手动存档;自动存档由 apply 级全局控制器负责,不依赖本视图挂载)----
-  const sessionStats = typeof useProjection === 'function' ? useProjection('sessionStats') : undefined
-  const playerTurns = useMemo(() => lines.filter(l => l.kind === 'player').length, [lines])
-  const turns = typeof sessionStats?.turns === 'number' ? sessionStats.turns : playerTurns
   const autoSessionId = typeof api?.currentSessionId === 'function'
     ? (api.currentSessionId() ?? 'default')
     : (typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'default')
-  // 回合数(持久)供手动存档一致性守卫使用。
-  const turnsRef = useRef(0)
-  turnsRef.current = turns
   // 窗口记录采集(history 接口不可用时的存档回退)。
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
+  // 回合结束 seq(官方 snapshot.turnEnds Map):窗口节点缺 seq 时的存档点回退来源。
+  const turnEndsRef = useRef(turnEnds)
+  turnEndsRef.current = turnEnds
   const readRecord = useCallback(() => {
     const list = Array.isArray(nodesRef.current) ? nodesRef.current : []
     const recLines = nodesToLines(list)
     const lastNode = list[list.length - 1]
+    let atSeq = lastNode !== undefined && typeof lastNode.seq === 'number' ? lastNode.seq : null
+    if (atSeq === null) {
+      try {
+        for (const seq of turnEndsRef.current.values()) {
+          if (typeof seq === 'number') atSeq = seq
+        }
+      } catch {
+        // 忽略
+      }
+    }
     return {
       lines: recLines,
       turns: recLines.filter(l => l.kind === 'player').length,
-      atSeq: lastNode !== undefined && typeof lastNode.seq === 'number' ? lastNode.seq : null,
+      atSeq,
     }
   }, [api])
   // 对话行骤降看门狗(仅记录,不干预):同一会话内 nodes 数量骤降(>50%)且非
@@ -1027,21 +1035,33 @@ export function GalView({ useSession, useInput, inputActions, useScene, useHisto
     if (typeof api?.performFileSave !== 'function') throw new Error('当前环境不支持文件存档')
     const result = await api.performFileSave({
       auto: false,
-      // 守卫与 guardBefore 同源:优先 history 转写回合数,不可用时回退窗口/投影计数。
+      // 守卫与 guardBefore 同源:优先 history 转写回合数;history 不可用时回退
+      // readRecord(与 performFileSave 的 fallbackLines 同一窗口采集源,回合计数
+      // 口径一致,避免 history 计数与 sessionStats 计数混用导致误判 interfered)。
       guardCheck: async () => {
         const id = api.currentSessionId()
         const t = typeof api?.captureTranscript === 'function' ? await api.captureTranscript(id) : null
-        return { sessionId: id, turns: t !== null ? t.turns : turnsRef.current }
+        if (t !== null && t !== undefined && t.error === null) return { sessionId: id, turns: t.turns }
+        return { sessionId: id, turns: readRecord().turns }
       },
       fallbackLines: readRecord(),
     })
     if (!result.ok) {
-      if (result.reason === 'busy') throw new Error('已有存档正在进行，请稍候再试')
-      if (result.reason === 'interfered') throw new Error('存档期间对话发生了变化，已取消本次存档，请重试')
-      if (result.reason === 'empty') throw new Error('还没有已完成的对话，先聊两句再存档吧')
-      if (result.reason === 'no-session') throw new Error('未找到当前会话')
-      if (result.reason === 'capture-unavailable') throw new Error('当前环境无法读取会话记录，请重试')
-      throw new Error('存档失败：' + String(result.reason ?? '未知原因'))
+      const reason = String(result.reason ?? '')
+      if (reason === 'busy') throw new Error('已有存档正在进行，请稍候再试')
+      if (reason === 'interfered') throw new Error('存档期间对话发生了变化，已取消本次存档，请重试')
+      if (reason.indexOf('empty') === 0) {
+        const detail = reason.length > 6 ? reason.slice(6) : ''
+        throw new Error(detail === ''
+          ? '还没有已完成的对话，先聊两句再存档吧'
+          : '存档点缺失，无法存档（原因：' + detail + '）')
+      }
+      if (reason === 'no-session') throw new Error('未找到当前会话')
+      if (reason.indexOf('capture-unavailable') === 0) {
+        const detail = reason.length > 19 ? reason.slice(20) : ''
+        throw new Error('当前环境无法读取会话记录' + (detail === '' ? '，请重试' : '（' + detail + '）'))
+      }
+      throw new Error('存档失败：' + (reason === '' ? '未知原因' : reason))
     }
     return result
   }, [api, pending, readRecord])
