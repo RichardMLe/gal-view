@@ -5460,6 +5460,9 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
     const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null;
     if (entry?.running === true) return;
     if (typeof api?.waitSettled !== "function" || typeof api?.performFileSave !== "function") return;
+    const nowMs = Date.now();
+    if (typeof rec.lastTryAt === "number" && nowMs - rec.lastTryAt < 1e4) return;
+    rec.lastTryAt = nowMs;
     rec.busy = true;
     try {
       const gate = await api.waitSettled({
@@ -5479,6 +5482,10 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
       }
       const result = await api.performFileSave({
         auto: true,
+        // 自动档不调用官方导出端点:导出在主机侧触发会话日志持久化屏障,
+        // 纯后台自动档无法锁定用户输入,新回合若恰在此窗口开始会与活跃回合
+        // 交互,曾引发官方窗口重装(对话消失)。自动档记录=完整文本转写 md。
+        skipZip: true,
         guardCheck: async () => {
           const s = sessionsSvc?.list?.getSnapshot?.() ?? null;
           const cur = sessionOf(s);
@@ -6234,7 +6241,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const name2 = id + ".md";
       const zipName = id + ".zip";
       const hasZip = payload.zip !== null && payload.zip !== void 0 && payload.zip !== "";
-      const note = (typeof payload.exportNote === "string" && payload.exportNote !== "" ? payload.exportNote + "\u3002" : "") + (hasZip ? "" : "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u4E0D\u53EF\u7528,\u5B8C\u6574\u8BB0\u5F55\u4EE5\u6587\u672C\u8F6C\u5F55\u4E3A\u51C6\u3002");
+      const noteBase = typeof payload.exportNote === "string" && payload.exportNote !== "" ? payload.exportNote + "\u3002" : "";
+      const note = noteBase + (noteBase === "" && !hasZip ? "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u4E0D\u53EF\u7528,\u5B8C\u6574\u8BB0\u5F55\u4EE5\u6587\u672C\u8F6C\u5F55\u4E3A\u51C6\u3002" : "");
       const text = buildSaveDoc({ ...payload, title, note: note === "" ? void 0 : note });
       if (dir === null) {
         if (fsAccessSupported()) {
@@ -6415,10 +6423,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     /**
      * 执行一次存档(全局统一入口,手动/自动共用):
      * ① 完整转写(history RPC;不可用时回退调用方提供的窗口行);
-     * ② 后台导出官方完整日志 zip;③ 一致性守卫(guardCheck 返回的回合数/会话 id);
+     * ② (手动档)后台导出官方完整日志 zip——**自动档跳过(skipZip)**:导出端点在
+     *    主机侧触发会话日志持久化屏障(sessions.flush),自动档纯后台无法锁定用户输入,
+     *    若新回合恰在此窗口开始会与活跃回合交互,曾引发官方窗口重装(对话消失);
+     * ③ 一致性守卫(导出前 + 导出后各一次,guardCheck 返回会话 id/回合数);
      * ④ 写 zip+md(含自动档清理/回滚)。
      * @param opts.auto - 是否自动档
-     * @param opts.guardCheck - async () => { sessionId, turns } 存档完成后的当前状态(守卫比对)
+     * @param opts.skipZip - true 时不调用导出端点(自动档使用,记录=完整文本转写)
+     * @param opts.guardCheck - async () => { sessionId, turns } 当前状态(守卫比对)
      * @param opts.fallbackLines - captureTranscript 不可用时回退的窗口采集(null 则失败)
      */
     async performFileSave(opts = {}) {
@@ -6446,20 +6458,29 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         if (atSeq === null) return { ok: false, reason: "empty" };
         const guardBefore = { sessionId: sessionId2, turns };
         const rootTitle = this.mainTitle();
+        const checkGuard = async () => {
+          const now = await opts.guardCheck();
+          return now !== null && now !== void 0 && now.sessionId === guardBefore.sessionId && now.turns === guardBefore.turns;
+        };
+        if (typeof opts.guardCheck === "function" && !await checkGuard()) {
+          console.warn("[gal-view:save] \u5B58\u6863\u524D\u4F1A\u8BDD\u5DF2\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
+          return { ok: false, reason: "interfered" };
+        }
         let zip = null;
         let exportNote = captureNote;
-        try {
-          zip = await this.exportSessionLog(sessionId2);
-        } catch (cause) {
-          console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", cause);
-          exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
-        }
-        if (typeof opts.guardCheck === "function") {
-          const now = await opts.guardCheck();
-          if (now === null || now.sessionId !== guardBefore.sessionId || now.turns !== guardBefore.turns) {
-            console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guardBefore, "\u2192", now);
-            return { ok: false, reason: "interfered" };
+        if (opts.skipZip !== true) {
+          try {
+            zip = await this.exportSessionLog(sessionId2);
+          } catch (cause) {
+            console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", cause);
+            exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
           }
+        } else {
+          exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u81EA\u52A8\u6863\u4E3A\u5B8C\u6574\u6587\u672C\u8BB0\u5F55(\u4E0D\u542B\u5B98\u65B9\u65E5\u5FD7 zip)";
+        }
+        if (typeof opts.guardCheck === "function" && !await checkGuard()) {
+          console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
+          return { ok: false, reason: "interfered" };
         }
         const result = await this.saveSlotFile({
           auto: opts.auto === true,

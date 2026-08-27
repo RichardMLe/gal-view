@@ -308,6 +308,16 @@ try {
   if (forkCalls[forkBeforePfs]?.atSeq !== 60) { console.error('FAIL load atSeq from history: ' + JSON.stringify(forkCalls[forkBeforePfs])); process.exit(1) }
   console.log('performFileSave ok (turns=' + pfsEntry.turns + ', atSeq=60)')
 
+  // —— skipZip(自动档):不调用导出端点(零 flush),仅完整文本 md ——
+  listCurrent = 's-root'
+  const pfsAuto = await registeredApi.performFileSave({ auto: true, skipZip: true, guardCheck: async () => ({ sessionId: 's-root', turns: 15 }) })
+  if (!pfsAuto.ok) { console.error('FAIL performFileSave skipZip: ' + JSON.stringify(pfsAuto)); process.exit(1) }
+  const pfsAutoText = String(fakeFiles.get(pfsAuto.id + '.md')?.content ?? '')
+  if (!pfsAutoText.includes('自动档为完整文本记录')) { console.error('FAIL skipZip note missing'); process.exit(1) }
+  if (!pfsAutoText.includes('第15答')) { console.error('FAIL skipZip record incomplete'); process.exit(1) }
+  if (fakeFiles.has(pfsAuto.id + '.zip')) { console.error('FAIL skipZip must not write zip'); process.exit(1) }
+  console.log('skipZip ok:', pfsAuto.id)
+
   // —— 旧式槽迁移(P4):按钮触发 → 进度 → 完成后旧槽名录清空、迁移条目并入列表 ——
   const progress = []
   const mig = await registeredApi.migrateLegacySlots((done, total) => progress.push([done, total]))

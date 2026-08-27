@@ -763,8 +763,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const name = id + '.md'
       const zipName = id + '.zip'
       const hasZip = payload.zip !== null && payload.zip !== undefined && payload.zip !== ''
-      const note = (typeof payload.exportNote === 'string' && payload.exportNote !== '' ? payload.exportNote + '。' : '')
-        + (hasZip ? '' : '官方日志导出不可用,完整记录以文本转录为准。')
+      const noteBase = typeof payload.exportNote === 'string' && payload.exportNote !== '' ? payload.exportNote + '。' : ''
+      const note = noteBase + (noteBase === '' && !hasZip ? '官方日志导出不可用,完整记录以文本转录为准。' : '')
       const text = buildSaveDoc({ ...payload, title, note: note === '' ? undefined : note })
       if (dir === null) {
         if (fsAccessSupported()) {
@@ -954,10 +954,14 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     /**
      * 执行一次存档(全局统一入口,手动/自动共用):
      * ① 完整转写(history RPC;不可用时回退调用方提供的窗口行);
-     * ② 后台导出官方完整日志 zip;③ 一致性守卫(guardCheck 返回的回合数/会话 id);
+     * ② (手动档)后台导出官方完整日志 zip——**自动档跳过(skipZip)**:导出端点在
+     *    主机侧触发会话日志持久化屏障(sessions.flush),自动档纯后台无法锁定用户输入,
+     *    若新回合恰在此窗口开始会与活跃回合交互,曾引发官方窗口重装(对话消失);
+     * ③ 一致性守卫(导出前 + 导出后各一次,guardCheck 返回会话 id/回合数);
      * ④ 写 zip+md(含自动档清理/回滚)。
      * @param opts.auto - 是否自动档
-     * @param opts.guardCheck - async () => { sessionId, turns } 存档完成后的当前状态(守卫比对)
+     * @param opts.skipZip - true 时不调用导出端点(自动档使用,记录=完整文本转写)
+     * @param opts.guardCheck - async () => { sessionId, turns } 当前状态(守卫比对)
      * @param opts.fallbackLines - captureTranscript 不可用时回退的窗口采集(null 则失败)
      */
     async performFileSave(opts = {}) {
@@ -985,21 +989,31 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         if (atSeq === null) return { ok: false, reason: 'empty' }
         const guardBefore = { sessionId, turns }
         const rootTitle = this.mainTitle()
+        // 一致性守卫(导出前):若会话已变化,根本不去碰导出端点。
+        const checkGuard = async () => {
+          const now = await opts.guardCheck()
+          return now !== null && now !== undefined && now.sessionId === guardBefore.sessionId && now.turns === guardBefore.turns
+        }
+        if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
+          console.warn('[gal-view:save] 存档前会话已变化,中止:', guardBefore)
+          return { ok: false, reason: 'interfered' }
+        }
         let zip = null
         let exportNote = captureNote
-        try {
-          zip = await this.exportSessionLog(sessionId)
-        } catch (cause) {
-          console.warn('[gal-view:save] 官方日志导出失败:', cause)
-          exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
-        }
-        // 一致性守卫:存档期间对话有任何变化 → 中止,绝不产出不一致存档。
-        if (typeof opts.guardCheck === 'function') {
-          const now = await opts.guardCheck()
-          if (now === null || now.sessionId !== guardBefore.sessionId || now.turns !== guardBefore.turns) {
-            console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore, '→', now)
-            return { ok: false, reason: 'interfered' }
+        if (opts.skipZip !== true) {
+          try {
+            zip = await this.exportSessionLog(sessionId)
+          } catch (cause) {
+            console.warn('[gal-view:save] 官方日志导出失败:', cause)
+            exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
           }
+        } else {
+          exportNote = (exportNote === '' ? '' : exportNote + ';') + '自动档为完整文本记录(不含官方日志 zip)'
+        }
+        // 一致性守卫(导出后):存档期间对话有任何变化 → 中止,绝不产出不一致存档。
+        if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
+          console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore)
+          return { ok: false, reason: 'interfered' }
         }
         const result = await this.saveSlotFile({
           auto: opts.auto === true,

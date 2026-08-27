@@ -85,6 +85,10 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null
     if (entry?.running === true) return
     if (typeof api?.waitSettled !== 'function' || typeof api?.performFileSave !== 'function') return
+    // 最低间隔:避免过小间隔(如 1)在快速连续回合时反复触发完整转写。
+    const nowMs = Date.now()
+    if (typeof rec.lastTryAt === 'number' && nowMs - rec.lastTryAt < 10000) return
+    rec.lastTryAt = nowMs
     rec.busy = true
     try {
       const gate = await api.waitSettled({
@@ -104,6 +108,10 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       }
       const result = await api.performFileSave({
         auto: true,
+        // 自动档不调用官方导出端点:导出在主机侧触发会话日志持久化屏障,
+        // 纯后台自动档无法锁定用户输入,新回合若恰在此窗口开始会与活跃回合
+        // 交互,曾引发官方窗口重装(对话消失)。自动档记录=完整文本转写 md。
+        skipZip: true,
         guardCheck: async () => {
           const s = sessionsSvc?.list?.getSnapshot?.() ?? null
           const cur = sessionOf(s)
