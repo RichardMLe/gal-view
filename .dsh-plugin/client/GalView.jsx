@@ -262,6 +262,20 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     }
     setBusy(false)
   }
+  const removeBroken = async (name) => {
+    if (busy) return
+    if (typeof window.confirm === 'function' && !window.confirm('删除文件「' + name.replace('(孤立日志)', '') + '」？')) return
+    setBusy(true)
+    setError(null)
+    try {
+      if (typeof api?.deleteBrokenFile !== 'function') throw new Error('当前环境不支持删除')
+      await api.deleteBrokenFile(name)
+      await refresh()
+    } catch (cause) {
+      setError(causeText(cause))
+    }
+    setBusy(false)
+  }
   // 旧式槽位（会话分叉式）：读档走原 fork 槽路径；改名仅手动槽。
   const beginRename = (slot) => {
     setEditingId(slot.id)
@@ -372,10 +386,9 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
         <div className="gv-saves-dir">
           <span className="gv-saves-dir-label">
             {dirInfo !== null && dirInfo.authorized === true
-              ? '存档文件夹：' + (dirInfo.dirName !== '' ? dirInfo.dirName : '工程 .gal-view-saves') + (dirInfo.projectPath !== '' ? '（工程：' + dirInfo.projectPath + '）' : '')
+              ? '存档文件夹：' + (dirInfo.projectPath !== '' ? String(dirInfo.projectPath).replace(/[\\/]+$/, '') + '\\.gal-view-saves' : '工程 .gal-view-saves')
               : '存档文件夹：未授权' + (dirInfo !== null && dirInfo.projectPath !== '' ? '（工程路径：' + dirInfo.projectPath + '）' : '')}
             {dirInfo !== null && dirInfo.mismatch === true ? ' · 注意：授权目录与当前工程不一致' : ''}
-            {brokenCount > 0 ? ' · ' + brokenCount + ' 个文件无法识别' : ''}
           </span>
           <button type="button" className="gv-btn" disabled={picking || busy} onClick={pickDir}>
             {picking ? '选择中…' : (dirInfo !== null && dirInfo.authorized === true ? '重新选择' : '选择存档文件夹')}
@@ -411,6 +424,17 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
           {hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true)}
           {hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false)}
           {migrating !== null && <p className="gv-saves-notice">迁移中 {migrating.done}/{migrating.total}…（期间不可操作）</p>}
+          {brokenCount > 0 && index !== null && Array.isArray(index.broken) && (
+            <div className="gv-saves-broken">
+              <p className="gv-saves-broken-title">{brokenCount} 个文件无法识别（不是有效的存档文件，已跳过）：</p>
+              {index.broken.map(name => (
+                <div className="gv-saves-broken-row" key={String(name)}>
+                  <span className="gv-saves-broken-name">{String(name)}</span>
+                  <button type="button" className="gv-btn" disabled={busy} onClick={() => removeBroken(name)}>删除</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         {mode === 'save' && (
           <button type="button" className="gv-btn gv-btn-gold gv-saves-create" disabled={busy} onClick={save}>

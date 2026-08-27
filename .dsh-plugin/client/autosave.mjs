@@ -24,7 +24,6 @@ function sessionOf(snapshot) {
 export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
   const perSession = new Map()
   let currentId = null
-  let lastRunning = false
   let disposed = false
 
   const keyOf = id => 'gal-view:auto:' + String(id)
@@ -61,13 +60,17 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
           if (rec !== null && rec !== undefined) rec.turns = transcript.turns
         }
       } catch {
-        // 忽略:history 不可用时从 0 起(跃迁计数仍会推进)。
+        // 忽略:history 不可用时转写计数不可用(自动存档降级为不触发)。
       }
     }
     const rec = perSession.get(id)
     if (rec === null || rec === undefined) return
-    rec.baseline = readStoredBaseline(id) ?? rec.turns
+    // 旧版本留下的基线可能大于当前总回合数(旧计数口径),钳制到 ≤ 当前回合,
+    // 否则「轮次-基线 < 间隔」永远成立、自动存档永不触发。
+    const stored = readStoredBaseline(id)
+    rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns
     publish({ turns: rec.turns, baseline: rec.baseline, every: every() })
+    void maybeSave()
   }
 
   const maybeSave = async () => {
@@ -75,22 +78,40 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     const id = currentId
     if (id === null || id === undefined) return
     const rec = perSession.get(id)
-    if (rec === null || rec === undefined || rec.baseline === null) return
+    if (rec === null || rec === undefined) return
     if (rec.busy) return
     const interval = every()
-    publish({ turns: rec.turns, baseline: rec.baseline, every: interval })
-    if (interval <= 0) return
-    if (rec.turns - rec.baseline < interval) return
-    const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
-    const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null
-    if (entry?.running === true) return
-    if (typeof api?.waitSettled !== 'function' || typeof api?.performFileSave !== 'function') return
-    // 最低间隔:避免过小间隔(如 1)在快速连续回合时反复触发完整转写。
+    if (interval <= 0) {
+      publish({ turns: rec.turns, baseline: rec.baseline, every: interval })
+      return
+    }
+    if (typeof api?.captureTranscript !== 'function' || typeof api?.waitSettled !== 'function' || typeof api?.performFileSave !== 'function') return
+    // 节流:检查会走一次完整 history 转写,至少间隔 10s。
     const nowMs = Date.now()
-    if (typeof rec.lastTryAt === 'number' && nowMs - rec.lastTryAt < 10000) return
-    rec.lastTryAt = nowMs
+    if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < 10000) return
+    rec.lastCheckAt = nowMs
     rec.busy = true
     try {
+      // 以官方 history 转写为唯一计数来源(与存档内容同源、真实总回合数,
+      // 不依赖列表 running 跃迁信号)。
+      const transcript = await api.captureTranscript(id)
+      const turns = transcript !== null && typeof transcript.turns === 'number' ? transcript.turns : null
+      if (turns === null) {
+        publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录' })
+        return
+      }
+      rec.turns = turns
+      if (rec.baseline === null) {
+        const stored = readStoredBaseline(id)
+        rec.baseline = stored !== null ? Math.min(stored, turns) : turns
+      } else if (rec.baseline > turns) {
+        rec.baseline = turns
+      }
+      publish({ turns, baseline: rec.baseline, every: interval })
+      if (turns - rec.baseline < interval) return
+      const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null
+      if (entry?.running === true) return
       const gate = await api.waitSettled({
         quietMs: 1500,
         timeoutMs: 30000,
@@ -113,16 +134,14 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
         // 交互,曾引发官方窗口重装(对话消失)。自动档记录=完整文本转写 md。
         skipZip: true,
         guardCheck: async () => {
-          const s = sessionsSvc?.list?.getSnapshot?.() ?? null
-          const cur = sessionOf(s)
-          const r = perSession.get(cur)
-          return { sessionId: cur, turns: r?.turns ?? 0 }
+          const t2 = await api.captureTranscript(id)
+          return { sessionId: id, turns: t2 !== null ? t2.turns : null }
         },
       })
       if (result.ok) {
-        rec.baseline = rec.turns
+        rec.baseline = turns
         try { window.localStorage.setItem(keyOf(id), String(rec.baseline)) } catch { /* 忽略 */ }
-        publish({ lastAt: Date.now(), lastResult: 'ok', lastReason: '', turns: rec.turns, baseline: rec.baseline, every: interval })
+        publish({ lastAt: Date.now(), lastResult: 'ok', lastReason: '', turns, baseline: rec.baseline, every: interval })
         console.info('[gal-view] 自动存档完成(间隔 ' + interval + ' 轮)')
       } else {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: String(result.reason ?? '未知') })
@@ -140,21 +159,12 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     if (disposed) return
     const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
     const id = sessionOf(snap)
-    const entry = id !== null && snap !== null && snap.byId?.[id] !== undefined ? snap.byId[id] : null
-    const runningNow = entry?.running === true
     if (id !== currentId) {
       if (id !== null && id !== undefined) void initSession(id)
       currentId = id
-      lastRunning = runningNow
       publish({ turns: 0, baseline: 0 })
       return
     }
-    // 完成一轮:running true → false 跃迁计数。
-    if (currentId !== null && currentId !== undefined && lastRunning && !runningNow) {
-      const rec = perSession.get(currentId)
-      if (rec !== null && rec !== undefined) rec.turns += 1
-    }
-    lastRunning = runningNow
     void maybeSave()
   }
 

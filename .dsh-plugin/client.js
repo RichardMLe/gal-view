@@ -530,6 +530,11 @@ var CSS = `
 }
 .gv-saves-auth p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: var(--gv-text); }
 .gv-saves-auth-actions { display: flex; gap: 8px; }
+/* \u65E0\u6CD5\u8BC6\u522B\u7684\u6742\u9879\u6587\u4EF6\u5217\u8868\u3002 */
+.gv-saves-broken { margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--gv-line-strong); border-radius: 4px; background: rgba(16, 20, 38, .3); }
+.gv-saves-broken-title { margin: 0 0 6px; font-size: 11px; color: var(--gv-text-dim); }
+.gv-saves-broken-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.gv-saves-broken-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--gv-text-dim); }
 
 /* ---------- \u9519\u8BEF\u8FB9\u754C ---------- */
 .gv-crash { display: flex; align-items: center; justify-content: center; }
@@ -4258,6 +4263,20 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     }
     setBusy(false);
   };
+  const removeBroken = async (name2) => {
+    if (busy) return;
+    if (typeof window.confirm === "function" && !window.confirm("\u5220\u9664\u6587\u4EF6\u300C" + name2.replace("(\u5B64\u7ACB\u65E5\u5FD7)", "") + "\u300D\uFF1F")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (typeof api?.deleteBrokenFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664");
+      await api.deleteBrokenFile(name2);
+      await refresh();
+    } catch (cause) {
+      setError(causeText2(cause));
+    }
+    setBusy(false);
+  };
   const beginRename = (slot) => {
     setEditingId(slot.id);
     setEditText(slot.title);
@@ -4348,10 +4367,10 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setBusy(false);
   };
   const hasLegacy = legacy.saves.length > 0 || legacy.autos.length > 0;
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirInfo !== null && dirInfo.authorized === true ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A" + (dirInfo.dirName !== "" ? dirInfo.dirName : "\u5DE5\u7A0B .gal-view-saves") + (dirInfo.projectPath !== "" ? "\uFF08\u5DE5\u7A0B\uFF1A" + dirInfo.projectPath + "\uFF09" : "") : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u6388\u6743" + (dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08\u5DE5\u7A0B\u8DEF\u5F84\uFF1A" + dirInfo.projectPath + "\uFF09" : ""), dirInfo !== null && dirInfo.mismatch === true ? " \xB7 \u6CE8\u610F\uFF1A\u6388\u6743\u76EE\u5F55\u4E0E\u5F53\u524D\u5DE5\u7A0B\u4E0D\u4E00\u81F4" : "", brokenCount > 0 ? " \xB7 " + brokenCount + " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirInfo !== null && dirInfo.authorized === true ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), authPrompt && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-auth" }, /* @__PURE__ */ import_react4.default.createElement("p", null, "\u9996\u6B21\u5B58\u6863\u9700\u8981\u6388\u6743\uFF1A\u8BF7\u9009\u62E9\u5F53\u524D\u5DE5\u7A0B\u6587\u4EF6\u5939", dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08" + dirInfo.projectPath + "\uFF09" : "", "\u3002\u6D4F\u89C8\u5668\u4E0D\u5141\u8BB8\u7A0B\u5E8F\u6309\u8DEF\u5F84\u76F4\u63A5\u5199\u6587\u4EF6\uFF0C\u9700\u8981\u4F60\u70B9\u9009\u4E00\u6B21\uFF1B\u4E4B\u540E\u5C06\u9759\u9ED8\u5199\u5165\u3002"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-auth-actions" }, /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold", disabled: picking, onClick: async () => {
+  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirInfo !== null && dirInfo.authorized === true ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A" + (dirInfo.projectPath !== "" ? String(dirInfo.projectPath).replace(/[\\/]+$/, "") + "\\.gal-view-saves" : "\u5DE5\u7A0B .gal-view-saves") : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u6388\u6743" + (dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08\u5DE5\u7A0B\u8DEF\u5F84\uFF1A" + dirInfo.projectPath + "\uFF09" : ""), dirInfo !== null && dirInfo.mismatch === true ? " \xB7 \u6CE8\u610F\uFF1A\u6388\u6743\u76EE\u5F55\u4E0E\u5F53\u524D\u5DE5\u7A0B\u4E0D\u4E00\u81F4" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirInfo !== null && dirInfo.authorized === true ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), authPrompt && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-auth" }, /* @__PURE__ */ import_react4.default.createElement("p", null, "\u9996\u6B21\u5B58\u6863\u9700\u8981\u6388\u6743\uFF1A\u8BF7\u9009\u62E9\u5F53\u524D\u5DE5\u7A0B\u6587\u4EF6\u5939", dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08" + dirInfo.projectPath + "\uFF09" : "", "\u3002\u6D4F\u89C8\u5668\u4E0D\u5141\u8BB8\u7A0B\u5E8F\u6309\u8DEF\u5F84\u76F4\u63A5\u5199\u6587\u4EF6\uFF0C\u9700\u8981\u4F60\u70B9\u9009\u4E00\u6B21\uFF1B\u4E4B\u540E\u5C06\u9759\u9ED8\u5199\u5165\u3002"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-auth-actions" }, /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold", disabled: picking, onClick: async () => {
     await pickDir();
     void save();
-  } }, "\u9009\u62E9\u6587\u4EF6\u5939\u5E76\u6388\u6743"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking, onClick: () => setAuthPrompt(false) }, "\u53D6\u6D88"))), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u628A\u5F53\u524D\u5BF9\u8BDD\u5B8C\u6574\u590D\u5236\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF1A\u5B98\u65B9\u5B8C\u6574\u65E5\u5FD7 zip + \u53EF\u8BFB\u8BB0\u5F55 md\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09\uFF1B\u5B58\u6863\u671F\u95F4\u8BF7\u52FF\u7EE7\u7EED\u5BF9\u8BDD\uFF0C\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u6309\u5B58\u6863\u70B9\u5207\u51FA\u65B0\u4E16\u754C\u7EBF\u7EE7\u7EED\uFF08\u6D4B\u8BD5\u671F\u65E7\u4E16\u754C\u7EBF\u4FDD\u7559\uFF0C\u4E0D\u9500\u6BC1\uFF09\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group-row" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF09"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: migrate }, "\u8F6C\u5316\u4E3A\u65B0\u5F0F\u5B58\u6863")), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false), migrating !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, "\u8FC1\u79FB\u4E2D ", migrating.done, "/", migrating.total, "\u2026\uFF08\u671F\u95F4\u4E0D\u53EF\u64CD\u4F5C\uFF09")), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
+  } }, "\u9009\u62E9\u6587\u4EF6\u5939\u5E76\u6388\u6743"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking, onClick: () => setAuthPrompt(false) }, "\u53D6\u6D88"))), mode === "save" ? /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u5B58\u6863 = \u628A\u5F53\u524D\u5BF9\u8BDD\u5B8C\u6574\u590D\u5236\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF1A\u5B98\u65B9\u5B8C\u6574\u65E5\u5FD7 zip + \u53EF\u8BFB\u8BB0\u5F55 md\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09\uFF1B\u5B58\u6863\u671F\u95F4\u8BF7\u52FF\u7EE7\u7EED\u5BF9\u8BDD\uFF0C\u8BFB\u6863\u6309\u5B58\u6863\u70B9\u8FD8\u539F\u591A\u8F6E\u5BF9\u8BDD\u3002") : /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-hint" }, "\u8BFB\u53D6\u5B58\u6863 = \u6309\u5B58\u6863\u70B9\u5207\u51FA\u65B0\u4E16\u754C\u7EBF\u7EE7\u7EED\uFF08\u6D4B\u8BD5\u671F\u65E7\u4E16\u754C\u7EBF\u4FDD\u7559\uFF0C\u4E0D\u9500\u6BC1\uFF09\u3002", running === true ? "\u5F53\u524D\u56DE\u590D\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u7B49\u5B83\u7ED3\u675F\u540E\u518D\u8BFB\u53D6\u3002" : ""), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group-row" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF09"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: migrate }, "\u8F6C\u5316\u4E3A\u65B0\u5F0F\u5B58\u6863")), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false), migrating !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, "\u8FC1\u79FB\u4E2D ", migrating.done, "/", migrating.total, "\u2026\uFF08\u671F\u95F4\u4E0D\u53EF\u64CD\u4F5C\uFF09"), brokenCount > 0 && index !== null && Array.isArray(index.broken) && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken" }, /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-broken-title" }, brokenCount, " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B\uFF08\u4E0D\u662F\u6709\u6548\u7684\u5B58\u6863\u6587\u4EF6\uFF0C\u5DF2\u8DF3\u8FC7\uFF09\uFF1A"), index.broken.map((name2) => /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken-row", key: String(name2) }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-broken-name" }, String(name2)), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: () => removeBroken(name2) }, "\u5220\u9664"))))), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
 }
 function loadSaveIndex(api) {
   try {
@@ -5437,7 +5456,6 @@ function sessionOf(snapshot) {
 function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
   const perSession = /* @__PURE__ */ new Map();
   let currentId = null;
-  let lastRunning = false;
   let disposed = false;
   const keyOf = (id) => "gal-view:auto:" + String(id);
   const every = () => {
@@ -5471,29 +5489,47 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
     }
     const rec = perSession.get(id);
     if (rec === null || rec === void 0) return;
-    rec.baseline = readStoredBaseline(id) ?? rec.turns;
+    const stored = readStoredBaseline(id);
+    rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns;
     publish({ turns: rec.turns, baseline: rec.baseline, every: every() });
+    void maybeSave();
   };
   const maybeSave = async () => {
     if (disposed) return;
     const id = currentId;
     if (id === null || id === void 0) return;
     const rec = perSession.get(id);
-    if (rec === null || rec === void 0 || rec.baseline === null) return;
+    if (rec === null || rec === void 0) return;
     if (rec.busy) return;
     const interval = every();
-    publish({ turns: rec.turns, baseline: rec.baseline, every: interval });
-    if (interval <= 0) return;
-    if (rec.turns - rec.baseline < interval) return;
-    const snap = sessionsSvc?.list?.getSnapshot?.() ?? null;
-    const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null;
-    if (entry?.running === true) return;
-    if (typeof api?.waitSettled !== "function" || typeof api?.performFileSave !== "function") return;
+    if (interval <= 0) {
+      publish({ turns: rec.turns, baseline: rec.baseline, every: interval });
+      return;
+    }
+    if (typeof api?.captureTranscript !== "function" || typeof api?.waitSettled !== "function" || typeof api?.performFileSave !== "function") return;
     const nowMs = Date.now();
-    if (typeof rec.lastTryAt === "number" && nowMs - rec.lastTryAt < 1e4) return;
-    rec.lastTryAt = nowMs;
+    if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < 1e4) return;
+    rec.lastCheckAt = nowMs;
     rec.busy = true;
     try {
+      const transcript = await api.captureTranscript(id);
+      const turns = transcript !== null && typeof transcript.turns === "number" ? transcript.turns : null;
+      if (turns === null) {
+        publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55" });
+        return;
+      }
+      rec.turns = turns;
+      if (rec.baseline === null) {
+        const stored = readStoredBaseline(id);
+        rec.baseline = stored !== null ? Math.min(stored, turns) : turns;
+      } else if (rec.baseline > turns) {
+        rec.baseline = turns;
+      }
+      publish({ turns, baseline: rec.baseline, every: interval });
+      if (turns - rec.baseline < interval) return;
+      const snap = sessionsSvc?.list?.getSnapshot?.() ?? null;
+      const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null;
+      if (entry?.running === true) return;
       const gate = await api.waitSettled({
         quietMs: 1500,
         timeoutMs: 3e4,
@@ -5516,19 +5552,17 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
         // 交互,曾引发官方窗口重装(对话消失)。自动档记录=完整文本转写 md。
         skipZip: true,
         guardCheck: async () => {
-          const s = sessionsSvc?.list?.getSnapshot?.() ?? null;
-          const cur = sessionOf(s);
-          const r = perSession.get(cur);
-          return { sessionId: cur, turns: r?.turns ?? 0 };
+          const t2 = await api.captureTranscript(id);
+          return { sessionId: id, turns: t2 !== null ? t2.turns : null };
         }
       });
       if (result.ok) {
-        rec.baseline = rec.turns;
+        rec.baseline = turns;
         try {
           window.localStorage.setItem(keyOf(id), String(rec.baseline));
         } catch {
         }
-        publish({ lastAt: Date.now(), lastResult: "ok", lastReason: "", turns: rec.turns, baseline: rec.baseline, every: interval });
+        publish({ lastAt: Date.now(), lastResult: "ok", lastReason: "", turns, baseline: rec.baseline, every: interval });
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + interval + " \u8F6E)");
       } else {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: String(result.reason ?? "\u672A\u77E5") });
@@ -5545,20 +5579,12 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
     if (disposed) return;
     const snap = sessionsSvc?.list?.getSnapshot?.() ?? null;
     const id = sessionOf(snap);
-    const entry = id !== null && snap !== null && snap.byId?.[id] !== void 0 ? snap.byId[id] : null;
-    const runningNow = entry?.running === true;
     if (id !== currentId) {
       if (id !== null && id !== void 0) void initSession(id);
       currentId = id;
-      lastRunning = runningNow;
       publish({ turns: 0, baseline: 0 });
       return;
     }
-    if (currentId !== null && currentId !== void 0 && lastRunning && !runningNow) {
-      const rec = perSession.get(currentId);
-      if (rec !== null && rec !== void 0) rec.turns += 1;
-    }
-    lastRunning = runningNow;
     void maybeSave();
   };
   const offList = typeof sessionsSvc?.list?.subscribe === "function" ? sessionsSvc.list.subscribe(onList) : null;
@@ -6389,6 +6415,19 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       const removed = await removeSaveFile(dir, name2);
       await removeSaveFile(dir, zipName);
       console.info("[gal-view:save] \u5220\u9664\u5B58\u6863\u6587\u4EF6:", name2, "->", String(removed));
+      return removed;
+    },
+    /** 删除「无法识别」的杂项文件(面板列出的 broken 条目;兼容孤立 zip 后缀)。 */
+    async deleteBrokenFile(name2) {
+      const dir = await resolveSaveDir();
+      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      const clean = String(name2).replace("(\u5B64\u7ACB\u65E5\u5FD7)", "");
+      if (clean === "") return false;
+      const removed = await removeSaveFile(dir, clean);
+      if (clean.toLowerCase().endsWith(".md")) {
+        await removeSaveFile(dir, clean.replace(/\.md$/i, "") + ".zip");
+      }
+      console.info("[gal-view:save] \u5220\u9664\u65E0\u6CD5\u8BC6\u522B\u6587\u4EF6:", clean, "->", String(removed));
       return removed;
     },
     /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。

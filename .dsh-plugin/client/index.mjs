@@ -892,6 +892,19 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
       return removed
     },
+    /** 删除「无法识别」的杂项文件(面板列出的 broken 条目;兼容孤立 zip 后缀)。 */
+    async deleteBrokenFile(name) {
+      const dir = await resolveSaveDir()
+      if (dir === null) throw new Error('未选择存档文件夹')
+      const clean = String(name).replace('(孤立日志)', '')
+      if (clean === '') return false
+      const removed = await removeSaveFile(dir, clean)
+      if (clean.toLowerCase().endsWith('.md')) {
+        await removeSaveFile(dir, clean.replace(/\.md$/i, '') + '.zip')
+      }
+      console.info('[gal-view:save] 删除无法识别文件:', clean, '->', String(removed))
+      return removed
+    },
     /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
      * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
     async exportSessionLog(sessionId) {

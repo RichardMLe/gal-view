@@ -488,6 +488,11 @@ export const CSS = `
 }
 .gv-saves-auth p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: var(--gv-text); }
 .gv-saves-auth-actions { display: flex; gap: 8px; }
+/* 无法识别的杂项文件列表。 */
+.gv-saves-broken { margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--gv-line-strong); border-radius: 4px; background: rgba(16, 20, 38, .3); }
+.gv-saves-broken-title { margin: 0 0 6px; font-size: 11px; color: var(--gv-text-dim); }
+.gv-saves-broken-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.gv-saves-broken-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--gv-text-dim); }
 
 /* ---------- 错误边界 ---------- */
 .gv-crash { display: flex; align-items: center; justify-content: center; }
