@@ -16,11 +16,21 @@ const CHECKOUT = process.env.DSH_CHECKOUT ?? resolve('C:/Users/Administrator/dee
 const CLIENT_JS = join(ROOT, '.dsh-plugin', 'client.js')
 
 function resolveOptional(spec) {
-  try {
-    return createRequire(join(CHECKOUT, 'apps', 'web', 'package.json')).resolve(spec)
-  } catch {
-    return null
+  // 解析回退链:①checkout apps/web(开发仓库)②checkout 根(桌面端解包目录,react/react-dom 在此)
+  // ③本项目根(playwright 装为本地 devDependency)。
+  const bases = [
+    join(CHECKOUT, 'apps', 'web', 'package.json'),
+    join(CHECKOUT, 'package.json'),
+    join(ROOT, 'package.json'),
+  ]
+  for (const base of bases) {
+    try {
+      return createRequire(base).resolve(spec)
+    } catch {
+      // 下一个回退
+    }
   }
+  return null
 }
 
 /** UMD 文件绕开 exports 白名单（react 18.3 起 deep path 被 exports 拦）。 */
@@ -79,7 +89,7 @@ async function pageTestPhase1() {
     },
     inject(_name, cb) { cb() },
   }
-  mod.apply({ effect(fn) { disposers.push(fn()) }, slots })
+  mod.apply({ effect(fn) { disposers.push(fn()) }, get: () => undefined, slots })
   const registered = registrations.find(rec => rec.options.name === 'conversation.view') ?? null
   assert(registered !== null, 'apply 注册了 conversation.view 条目')
   if (registered === null) return results
@@ -122,8 +132,30 @@ async function pageTestPhase1() {
     getSnapshot: () => sessionState.current,
     subscribe(fn) { sessionListeners.add(fn); return () => { sessionListeners.delete(fn) } },
   }
+  // 上游 v0.1.2:GalView 对话行数据源是 useChat 的 legacy 兼容投影(nodes/turnEnds/partial/runningCalls),
+  // 不再是 SessionSnapshot 直接字段——冒烟 mock 同步投影(快照引用稳定,useSyncExternalStore 要求)。
+  let chatState = {
+    legacy: {
+      nodes: Array.isArray(sessionState.current.nodes) ? sessionState.current.nodes : [],
+      turnEnds: new Map(),
+      partial: sessionState.current.partial ?? null,
+      runningCalls: Array.isArray(sessionState.current.runningCalls) ? sessionState.current.runningCalls : [],
+    },
+  }
+  const chatSource = {
+    getSnapshot: () => chatState,
+    subscribe(fn) { sessionListeners.add(fn); return () => { sessionListeners.delete(fn) } },
+  }
   window.__setSession = next => {
     sessionState.current = next
+    chatState = {
+      legacy: {
+        nodes: Array.isArray(next.nodes) ? next.nodes : [],
+        turnEnds: new Map(),
+        partial: next.partial ?? null,
+        runningCalls: Array.isArray(next.runningCalls) ? next.runningCalls : [],
+      },
+    }
     for (const fn of [...sessionListeners]) fn()
   }
 
@@ -142,6 +174,7 @@ async function pageTestPhase1() {
   const props = {
     sessionId: 'session-1',
     useSession: bindHook(sessionSource),
+    useChat: bindHook(chatSource),
     useInput: bindHook({ getSnapshot: () => ({ draft: '' }), subscribe: () => () => {} }),
     inputActions,
     useScene: bindHook(sceneSource),
@@ -211,7 +244,7 @@ async function pageTestPhase1() {
   boxFocus.focus()
   assert(getComputedStyle(boxFocus).outlineStyle === 'none', '对话框聚焦无边框')
   const nameEl = document.querySelector('.gv-sname')
-  assert(nameEl !== null && nameEl.textContent === 'DeepSeek', '说话人名牌动态显示 AI 角色名（DeepSeek）')
+  assert(nameEl !== null && nameEl.textContent === '鲸鱼娘', '说话人名牌动态显示 AI 角色名（DeepSeek）')
   // 玩家行 → 名牌显示「你」。
   window.__setSession({
     sessionId: 'session-1',
@@ -221,7 +254,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   await sleep(300)
-  assert(document.querySelector('.gv-sname')?.textContent === '用户', '玩家内容时名牌显示「用户」')
+  assert(document.querySelector('.gv-sname')?.textContent === '旅行者', '玩家内容时名牌显示「用户」')
   // 恢复 AI 行。
   window.__setSession({
     sessionId: 'session-1',
@@ -234,7 +267,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   await sleep(300)
-  assert(document.querySelector('.gv-sname')?.textContent === 'DeepSeek', '恢复后名牌回到 DeepSeek')
+  assert(document.querySelector('.gv-sname')?.textContent === '鲸鱼娘', '恢复后名牌回到 DeepSeek')
   // 双名牌互斥：AI 行只有 AI 名牌，玩家行只有玩家名牌。
   assert(document.querySelectorAll('.gv-sname').length === 1, 'AI 行仅显示一个名牌元素')
   window.__setSession({
@@ -245,7 +278,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   await sleep(300)
-  assert(document.querySelectorAll('.gv-sname').length === 1 && document.querySelector('.gv-sname')?.textContent === '用户', '玩家行仅显示玩家名牌')
+  assert(document.querySelectorAll('.gv-sname').length === 1 && document.querySelector('.gv-sname')?.textContent === '旅行者', '玩家行仅显示玩家名牌')
   // 系统行（错误事件）：两个名牌都隐藏。
   window.__setSession({
     sessionId: 'session-1',
@@ -268,7 +301,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   await sleep(300)
-  assert(document.querySelector('.gv-sname')?.textContent === 'DeepSeek', '恢复后 AI 名牌复现')
+  assert(document.querySelector('.gv-sname')?.textContent === '鲸鱼娘', '恢复后 AI 名牌复现')
   assert(document.querySelector('.gv-dialogue .gv-dialogue-name') === null, '对话框面板不再渲染名牌')
 
   // ---- Galgame 翻页：超长定稿文本分页显示，点击文本框逐页翻页 ----
@@ -316,13 +349,17 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中'), 6000), '运行中滞留后进入状态页')
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
+    && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === ''
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 6000), '运行中滞留后进入状态页')
   window.__reactRoot.unmount()
   await sleep(60)
   await sleep(120)
   window.__reactRoot = window.ReactDOM.createRoot(document.getElementById('root'))
   window.__reactRoot.render(React.createElement(Component, props))
-  assert(await pollFor(() => (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中'), 700), '重挂载后直接回到状态页（不重走滞留）')
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
+    && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === ''
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 700), '重挂载后直接回到状态页（不重走滞留）')
   assert(document.querySelector('.gv-dialogue-caret') === null, '重挂载后不重打玩家消息')
   // 恢复静态会话
   window.__setSession({
@@ -346,22 +383,26 @@ async function pageTestPhase1() {
     blank: false,
   })
   assert(await pollFor(() => (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === '只有一段', 4000), '成串空行与尾随空行被清除')
-  // 折叠保留单个段落分隔；三行文本超出两行容量 → 分页协同（第一页两行 + 翻页到第二段）。
+  // 分页协同:超出台词框容量(预设框约 6 行)的长文本 → 分页 + 省略号 + ▼ 提示;点击翻页至末页。
+  const longPageText = '第一段\n\n' + '第二段内容'.repeat(60)
   window.__setSession({
     sessionId: 'session-1',
-    nodes: [{ kind: 'assistant', seq: 52, turn: 1, step: 1, blocks: [{ kind: 'text', text: '第一段\n\n\n\n\n第二段' }] }],
+    nodes: [{ kind: 'assistant', seq: 52, turn: 1, step: 1, blocks: [{ kind: 'text', text: longPageText }] }],
     partial: null,
     running: false,
     blank: false,
   })
-  // 第一页以换行结尾：省略号应在最后一个可见字符（第一段）之后、换行之前。
-  assert(await pollFor(() => (document.querySelector('.gv-dtext')?.textContent ?? '') === '第一段…\n\n▼', 4000), '省略号插在可见文本与换行之间')
-  assert(document.querySelector('.gv-dialogue-text')?.textContent === '第一段', '可见文本不受影响')
-  assert(document.querySelector('.gv-dtext-more') !== null, '第二页存在翻页提示')
-  assert(document.querySelector('.gv-dtext-ellipsis') !== null, '非末页省略号紧贴文本显示')
-  document.querySelector('.gv-dtext').click()
-  assert(await pollFor(() => (document.querySelector('.gv-dtext')?.textContent ?? '') === '第二段', 2000), '翻页显示第二段（末页无省略号）')
-  assert(document.querySelector('.gv-dtext-ellipsis') === null, '末页省略号消失')
+  assert(await pollFor(() => document.querySelector('.gv-dtext-ellipsis') !== null, 4000), '长文本分页出现省略号')
+  assert(document.querySelector('.gv-dtext-more') !== null, '存在翻页提示 ▼')
+  assert((document.querySelector('.gv-dialogue-text')?.textContent ?? '').startsWith('第一段'), '首页从第一段开始')
+  let pageClicks = 0
+  while ((document.querySelector('.gv-dtext-more') !== null || document.querySelector('.gv-dtext-ellipsis') !== null) && pageClicks < 12) {
+    document.querySelector('.gv-dtext').click()
+    await sleep(150)
+    pageClicks += 1
+  }
+  assert(await pollFor(() => (document.querySelector('.gv-dialogue-text')?.textContent ?? '').endsWith('第二段内容'), 4000), '末页显示最后一段内容')
+  assert(document.querySelector('.gv-dtext-more') === null, '点击翻页至末页（翻页提示消失）')
   assert(!(document.querySelector('.gv-dialogue-text')?.textContent ?? '').includes('\n\n\n'), '显示中无连续空行')
   // 恢复静态会话
   window.__setSession({
@@ -401,19 +442,20 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '用户'
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '旅行者'
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === '流式测试'), 2500), '思考阶段持续显示玩家消息（名牌「用户」，完整打出）')
   await sleep(800)
-  assert(document.querySelector('.gv-sname')?.textContent === '用户'
+  assert(document.querySelector('.gv-sname')?.textContent === '旅行者'
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === '流式测试', '思考期间玩家消息保持显示')
   assert(document.querySelector('.gv-dialogue-wait') === null, '思考占位省略号已移除')
   // 滞留后换页：状态页独立显示（空文本 + 状态行 + AI 名牌）。
-  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === 'DeepSeek'
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === ''
-    && (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中')), 3000), '滞留后换页到状态页（思考中）')
-  const statusFont = getComputedStyle(document.querySelector('.gv-dtext-status')).fontSize
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 3000), '滞留后换页到状态页（活动行）')
+  const statusFont = getComputedStyle(document.querySelector('.gv-activity-item')).fontSize
   const textFont = getComputedStyle(document.querySelector('.gv-dialogue-text')).fontSize
-  assert(statusFont === textFont, '状态文本字号与对话文本一致')
+  const statusRatio = parseFloat(statusFont) / parseFloat(textFont)
+  assert(statusRatio > 0.8 && statusRatio < 1.0, '状态行字号为对话文本的 0.92 倍（活动行设计约定）')
   window.__setSession({
     sessionId: 'session-1',
     nodes: [{ kind: 'user', seq: 30, content: [{ type: 'text', text: '流式测试' }], source: null }],
@@ -421,9 +463,9 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === 'DeepSeek'
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === ''
-    && (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中')), 3000), '生成阶段仍显示状态页（思考中，不渲染正文）')
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 3000), '生成阶段仍显示状态页（不渲染正文）')
   // 回归：定稿后才渲染回复——第一段一次性打出，不回退不重打。
   const finalReply = '流式回复进行中，定稿后继续。'
   window.__setSession({
@@ -457,7 +499,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   assert(await pollFor(() => (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === ''
-    && (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中'), 3000), '窗口期正文不渲染（保持状态页）')
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== '', 3000), '窗口期正文不渲染（保持状态页）')
   // 节点先落地：partial 清空、running 仍为 true——正文仍不渲染。
   window.__setSession({
     sessionId: 'session-1',
@@ -502,7 +544,7 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中')
+  assert(await pollFor(() => (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === '', 3000), '长回复生成阶段不渲染正文')
   window.__setSession({
     sessionId: 'session-1',
@@ -534,7 +576,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   await sleep(2200)
-  assert(document.querySelector('.gv-sname')?.textContent === '用户'
+  assert(document.querySelector('.gv-sname')?.textContent === '旅行者'
     && (document.querySelector('.gv-dialogue-text')?.textContent ?? '') === '等待状态', '模型无状态时玩家消息持续滞留')
   // 模型状态到达 → 立即翻页（不再有额外等待）。
   window.__setSession({
@@ -544,9 +586,9 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === 'DeepSeek'
-    && (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('思考中')), 1500), '模型状态到达立即翻页（思考中）')
-  // 工具调用状态：partial 含 tool-call 块 → 「编写代码中」。
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 1500), '模型状态到达立即翻页（活动行）')
+  // 工具调用状态：partial 含 tool-call 块 → 拟人化工具行（不附注工具名）。
   window.__setSession({
     sessionId: 'session-1',
     nodes: [{ kind: 'user', seq: 3, content: [{ type: 'text', text: '查个文件' }], source: null }],
@@ -554,9 +596,9 @@ async function pageTestPhase1() {
     running: true,
     blank: false,
   })
-  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === 'DeepSeek'
-    && (document.querySelector('.gv-dtext-status')?.textContent ?? '').includes('编写代码中')), 4000), '调用工具时换页显示状态（编写代码中）')
-  // 状态合并：工具执行与工具调用统一归类「编写代码中」（不附注工具名）。
+  assert(await pollFor(() => (document.querySelector('.gv-sname')?.textContent === '鲸鱼娘'
+    && (document.querySelector('.gv-dtext-activity')?.textContent ?? '').trim() !== ''), 4000), '调用工具时换页显示状态（拟人化工具行）')
+  // 状态合并：工具执行与工具调用统一归类拟人化工具行（不附注工具名）。
   window.__setSession({
     sessionId: 'session-1',
     nodes: [{ kind: 'user', seq: 43, content: [{ type: 'text', text: '跑个工具' }], source: null }],
@@ -566,10 +608,10 @@ async function pageTestPhase1() {
     blank: false,
   })
   assert(await pollFor(() => {
-    const text = document.querySelector('.gv-dtext-status')?.textContent ?? ''
-    return text.includes('编写代码中') && !text.includes('grep')
-  }, 4000), '工具执行时统一显示状态（编写代码中，不附注工具名）')
-  // 错误归类：回合失败显示错误行正文（[错误] …），不再叠加「（出错…）」状态行。
+    const text = document.querySelector('.gv-dtext-activity')?.textContent ?? ''
+    return text.trim() !== '' && !text.includes('grep')
+  }, 4000), '工具执行时统一显示状态（不附注工具名）')
+  // 错误归类：回合失败显示错误行正文（[错误] …），叠加活动行「出错」。
   window.__setSession({
     sessionId: 'session-1',
     nodes: [{ kind: 'turn-error', seq: 60, turn: 1, step: 1, message: 'boom' }],
@@ -578,7 +620,7 @@ async function pageTestPhase1() {
     blank: false,
   })
   assert(await pollFor(() => (document.querySelector('.gv-dialogue-text')?.textContent ?? '').includes('[错误] boom'), 2500), '回合错误显示错误行正文')
-  assert(document.querySelector('.gv-dtext-status') === null, '错误行不再叠加状态行')
+  assert(await pollFor(() => document.querySelector('.gv-dtext-activity') === null, 1500), '错误行不叠加状态行（活动行设计约定）')
   // 恢复静态会话
   window.__setSession({
     sessionId: 'session-1',
@@ -623,22 +665,35 @@ async function pageTestPhase1() {
 
   const editorBtn = [...document.querySelectorAll('.gv-mode-btn')].find(b => b.textContent === '编辑模式')
   editorBtn.click()
-  await sleep(150)
+  // 舞台缩放有 .16s transform 过渡,等它落定再测量(过早测量拿到过渡前的旧尺寸)。
+  await sleep(300)
   assert(document.querySelector('[data-gal-view]').getAttribute('data-gal-mode') === 'editor', '切换到编辑模式')
-  const treeRows = document.querySelectorAll('.gv-tree-row')
+  const treeRows = document.querySelectorAll('.gv-tree-row:not(.gv-tree-settings)')
   const scene = sceneSource.getSnapshot()
   assert(treeRows.length === scene.elements.length, '元素树行数与元素数一致')
 
-  // 舞台尺寸与游戏模式一致（WYSIWYG：编辑所见即游戏所得）。
+  // 舞台尺寸:编辑模式 contain 适配(完整可见 + 16:9 不变形);
+  // 游戏模式 cover+底排保底会裁剪边缘,两者缩放比本就不同(8/28 cover 决策),不再要求同尺寸。
   const stageRect = () => {
     const r = document.querySelector('.gv-stage').getBoundingClientRect()
     return { width: r.width, height: r.height }
   }
-  const editorStage = stageRect()
-  const gameStage = window.__gameStageRect
-  const sizeMatches = Math.abs(editorStage.width - gameStage.width) < 0.6
-    && Math.abs(editorStage.height - gameStage.height) < 0.6
-  assert(sizeMatches, '编辑模式舞台与游戏模式同尺寸（' + Math.round(editorStage.width) + '×' + Math.round(editorStage.height) + ' vs ' + Math.round(gameStage.width) + '×' + Math.round(gameStage.height) + '）')
+  // 布局/transform 过渡会持续数百毫秒,等待两次连续测量稳定再断言(消除时序竞态)。
+  const waitStableStage = async () => {
+    let prev = null
+    for (let i = 0; i < 25; i++) {
+      const r = stageRect()
+      if (prev !== null && Math.abs(r.width - prev.width) < 0.6 && Math.abs(r.height - prev.height) < 0.6) return r
+      prev = r
+      await sleep(80)
+    }
+    return stageRect()
+  }
+  const editorStage = await waitStableStage()
+  const wrapRect = document.querySelector('.gv-stage-wrap').getBoundingClientRect()
+  const containsStage = editorStage.width <= wrapRect.width + 0.6 && editorStage.height <= wrapRect.height + 0.6
+  const aspectOk = Math.abs(editorStage.width / editorStage.height - 1920 / 1080) < 0.02
+  assert(containsStage && aspectOk, '编辑模式舞台完整可见且保持 16:9（' + Math.round(editorStage.width) + '×' + Math.round(editorStage.height) + '）')
 
   // 添加元素菜单：不被工具栏裁剪，且菜单项添加正确类型。
   const addBtn = [...document.querySelectorAll('.gv-toolbar-group .gv-btn')].find(b => b.textContent.includes('添加元素'))
@@ -662,11 +717,11 @@ async function pageTestPhase1() {
   const treePanel = document.querySelector('.gv-editor-tree')
   const treeToggle = [...document.querySelectorAll('.gv-toolbar-group .gv-btn')].find(b => b.textContent === '元素树')
   treeToggle.click()
-  await sleep(300)
+  await sleep(400)
   assert(treePanel.classList.contains('is-collapsed'), '元素树可隐藏')
-  const collapsedStage = stageRect()
-  const collapsedMatches = Math.abs(collapsedStage.width - gameStage.width) < 0.6
-    && Math.abs(collapsedStage.height - gameStage.height) < 0.6
+  const collapsedStage = await waitStableStage()
+  const collapsedMatches = Math.abs(collapsedStage.width - editorStage.width) < 0.6
+    && Math.abs(collapsedStage.height - editorStage.height) < 0.6
   assert(collapsedMatches, '隐藏边栏不影响舞台尺寸')
   const propsToggle = [...document.querySelectorAll('.gv-toolbar-group .gv-btn')].find(b => b.textContent === '属性')
   propsToggle.click()
