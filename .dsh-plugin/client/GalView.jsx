@@ -11,6 +11,7 @@ import { createTypeState, setTarget, skip, advance, SPEEDS } from './typewriter.
 import {
   nodesToLines, partialToText, deriveActivity, speakerFor, welcomeLine, assistantDisplayName, legacyToViewState,
 } from './transcript.mjs'
+import { hideShellChromeForGal } from './host-adapter.mjs'
 import { splitPages, createFitsMeasurer } from './paging.mjs'
 import { normalizePersona } from './persona.mjs'
 
@@ -524,48 +525,13 @@ class GalErrorBoundary extends React.Component {
 }
 
 /**
- * 填满会话区(上游 v0.1.2 适配版):
- * 1. 隐藏会话外壳的输入席(data-composer-seat)并打 [data-gal-fills] 标记,
- *    让视窗占满会话主体——GAL 用自带输入行,与官方输入席同管线镜像草稿;
- * 2. 隐藏外壳的正文宽度拖拽手柄([data-width-handle],官方稳定属性),GAL 激活时
- *    不出现拖拽与手柄;卸载(切回「对话」/「轨迹」)时全部恢复。
+ * 填满会话区(宿主适配层 A1):隐藏官方输入席与正文宽度拖拽手柄,
+ * 打 [data-gal-fills] 标记;卸载(切回「对话」/「轨迹」)时全部恢复。
  * 回合导航只渲染在 ChatView 内部,GAL 激活时天然不出现,无需处理。
- * @param rootRef - 视窗根节点。
- * @returns 恢复函数。
+ * 具体选择器契约见 host-adapter.mjs(hideShellChromeForGal)。
  */
 function useFillSessionArea(rootRef) {
-  useEffect(() => {
-    const root = rootRef.current
-    if (root === null) return
-    const scrollBody = root.closest('[data-conversation-scroll]')
-    const seat = scrollBody?.querySelector(':scope > [data-composer-seat]') ?? null
-    if (scrollBody === null || seat === null) return
-    const prev = {
-      seatDisplay: seat.style.display,
-      overflow: scrollBody.style.overflow,
-      position: scrollBody.style.position,
-    }
-    seat.style.display = 'none'
-    scrollBody.style.overflow = 'hidden'
-    scrollBody.style.position = 'relative'
-    root.setAttribute('data-gal-fills', '')
-    // 隐藏宽度拖拽手柄(与隐藏输入席同生共死,随卸载恢复)。
-    const handles = scrollBody.parentElement?.querySelectorAll('[data-width-handle]') ?? []
-    const savedHandles = []
-    handles.forEach((el) => {
-      savedHandles.push([el, el.style.display])
-      el.style.display = 'none'
-    })
-    return () => {
-      seat.style.display = prev.seatDisplay
-      scrollBody.style.overflow = prev.overflow
-      scrollBody.style.position = prev.position
-      root.removeAttribute('data-gal-fills')
-      savedHandles.forEach(([el, display]) => {
-        el.style.display = display
-      })
-    }
-  }, [rootRef])
+  useEffect(() => hideShellChromeForGal(rootRef.current), [rootRef])
 }
 
 /**

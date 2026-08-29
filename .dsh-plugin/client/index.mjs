@@ -36,6 +36,11 @@ import {
   writeSaveZip, downloadBlobFile, withTimeout,
 } from './fsaccess.mjs'
 import { wireEventsToLines } from './transcript-log.mjs'
+import {
+  lazyService, buildSessionPageRequest, readSessionPageResponse,
+  windowTailSeqFromEntries, titleFromProjection, waitSettledSnapshotOf,
+  applyComposerPlaceholder,
+} from './host-adapter.mjs'
 import { createGlobalAutoSave } from './autosave.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
@@ -535,19 +540,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           shouldContinue: typeof opts.shouldContinue === 'function' ? opts.shouldContinue : undefined,
         })
       }
-      // 新面:绑定会话快照合成旧式列表形状。
+      // 新面:绑定会话快照合成旧式列表形状(契约见 host-adapter.waitSettledSnapshotOf)。
       const id = this.currentSessionId()
       const binding = id !== null ? sessionsSvc?.binding?.(id) : null
       const session = binding?.session ?? null
       if (session !== null && typeof session.getSnapshot === 'function') {
         return waitSettled({
-          getSnapshot: () => {
-            const snap = session.getSnapshot()
-            return {
-              current: id,
-              byId: { [id]: { running: snap?.running === true, completed: !(snap?.blank === true), blank: snap?.blank === true } },
-            }
-          },
+          getSnapshot: () => waitSettledSnapshotOf(id, session.getSnapshot()),
           subscribe: typeof session.subscribe === 'function' ? cb => session.subscribe(cb) : null,
           quietMs: typeof opts.quietMs === 'number' ? opts.quietMs : 2500,
           timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 30000,
@@ -629,10 +628,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         try {
           const projections = sessionsSvc?.binding?.(id)?.session?.projections
           const titleSnap = typeof projections?.faceOf === 'function' ? projections.faceOf('title')?.getSnapshot?.() : null
-          const projected = typeof titleSnap === 'string' && titleSnap !== '' && !isSlotTitle(titleSnap) && !/^s-created-\d+$/.test(titleSnap)
-            ? titleSnap
-            : (titleSnap !== null && typeof titleSnap === 'object' && typeof titleSnap.title === 'string' && titleSnap.title !== '' && !isSlotTitle(titleSnap.title) && !/^s-created-\d+$/.test(titleSnap.title) ? titleSnap.title : '')
-          if (projected !== '') return projected
+          const projected = titleFromProjection(titleSnap)
+          if (projected !== '' && !isSlotTitle(projected) && !/^s-created-\d+$/.test(projected)) return projected
         } catch {
           // 投影缺失:走旧路径
         }
@@ -994,11 +991,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
     },
     /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq, error }。
-     * 上游 v0.1.2:ApiProxy 移除,统一 @Remote 网关。新协议:
-     *   connectionSvc.rpc.call('/api', 'session/page', {
-     *     args: { address: { kind:'session', sessionId }, throughSeq, beforeSeq?, maxMessages? }
-     *   }) → { ok:true, value: { records: [{type:'event'|'chunks', event}], hasMore } }
-     * throughSeq 必须 ≤ 日志尾 seq(主机校验),取自会话绑定的事件窗口最后一条。 */
+     * 经宿主适配层 session/page(契约见 host-adapter.mjs);throughSeq 必须 ≤ 日志尾 seq。 */
     async captureTranscript(sessionId) {
       const handle = connectionSvc
       if (handle === null || handle === undefined || typeof handle?.rpc?.call !== 'function') {
@@ -1008,9 +1001,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let tailSeq = null
       try {
         const eventSource = sessionsSvc?.binding?.(sessionId)?.eventSource ?? null
-        const entries = Array.isArray(eventSource?.getSnapshot?.()?.entries) ? eventSource.getSnapshot().entries : []
-        const last = entries[entries.length - 1]
-        if (last !== undefined && typeof last?.event?.seq === 'number') tailSeq = last.event.seq
+        tailSeq = windowTailSeqFromEntries(eventSource?.getSnapshot?.()?.entries ?? null)
       } catch {
         // 忽略:走下方显式报错
       }
@@ -1019,26 +1010,19 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       let beforeSeq
       try {
         for (let i = 0; i < 200; i++) {
-          const payload = {
-            address: { kind: 'session', sessionId },
+          const payload = buildSessionPageRequest(sessionId, {
             throughSeq: tailSeq,
             maxMessages: 50,
             ...(beforeSeq !== undefined ? { beforeSeq } : {}),
-          }
+          })
           const response = await withTimeout(handle.rpc.call('/api', 'session/page', { args: payload }), 15000, undefined)
           if (response === undefined) throw new Error('history 请求超时')
-          if (response === null || typeof response !== 'object' || response.ok !== true) {
-            const err = response !== null && typeof response === 'object' && response.error !== null && typeof response.error === 'object'
-              ? String(response.error.message ?? response.error.code ?? '')
-              : '未知错误'
-            throw new Error('history 返回失败: ' + err)
-          }
-          const page = response.value
-          const pageRecords = Array.isArray(page?.records) ? page.records : []
-          if (pageRecords.length === 0) break
-          records.unshift(...pageRecords)
+          const page = readSessionPageResponse(response)
+          if (page.error !== null) throw new Error(page.error)
+          if (page.records.length === 0) break
+          records.unshift(...page.records)
           if (page.hasMore !== true) break
-          const firstEvent = pageRecords[0]?.event
+          const firstEvent = page.records[0]?.event
           if (firstEvent === null || firstEvent === undefined || typeof firstEvent.seq !== 'number') break
           beforeSeq = firstEvent.seq
         }
@@ -1307,22 +1291,12 @@ export function apply(ctx) {
   document.head.append(styleEl)
 
   // 分叉存档依赖客户端 sessions 服务（官方「分叉会话」同一通道）；缺失时功能降级。
-  // 上游 v0.1.2 启动顺序变化:插件 apply 可能早于运行时服务挂载,闭包快照会永远
-  // undefined(读档报"当前环境不支持会话分叉"的真因)。改为惰性代理:每次访问时
-  // 从 ctx 实时解析,方法自动绑定服务实例(proxy 不吞 this)。
-  const lazyService = name => new Proxy({}, {
-    get: (_t, key) => {
-      const s = ctx.get(name)
-      if (s === null || s === undefined) return undefined
-      const v = s[key]
-      return typeof v === 'function' ? v.bind(s) : v
-    },
-  })
-  const sessionsSvc = lazyService('sessions')
+  // 宿主适配层(A1):服务一律经 lazyService 惰性解析(启动顺序无关),契约见 host-adapter.mjs。
+  const sessionsSvc = lazyService(ctx, 'sessions')
   // archiveSession 在 workspaces 服务上（sessions 服务没有）；两者皆可缺省（功能降级）。
-  const workspacesSvc = lazyService('workspaces')
+  const workspacesSvc = lazyService(ctx, 'workspaces')
   // 官方连接服务：history RPC(captureTranscript 完整转写)经它调用；缺失时降级。
-  const connectionSvc = lazyService('connection')
+  const connectionSvc = lazyService(ctx, 'connection')
 
   const storage = createStorage()
   // 素材库：IndexedDB 持久 + 内存可观察镜像（图片 dataURL 不进 localStorage）。
@@ -1441,20 +1415,10 @@ export function apply(ctx) {
   if (offSelectionWatch !== null) ctx.effect(() => offSelectionWatch, 'gal-view: selection watchdog')
 
   // 官方「对话」栏输入框默认语句：与 GAL 视窗一致「你想和AI名牌说什么呢？」
-  // 上游 v0.1.2:官方输入席改为 contentEditable + 占位符元素 [data-composer-placeholder]
-  // (旧壳是 textarea[data-phase])。两种壳都适配;观察器在官方改写后补回(scene 名牌变化同步)。
+  // 宿主适配层(A1):新壳 contentEditable + 旧壳 textarea 双适配,选择器契约见 host-adapter。
   const syncOfficialPlaceholder = () => {
     const name = assistantDisplayName(sceneSource.getSnapshot())
-    const text = '你想和' + name + '说什么呢？'
-    for (const input of document.querySelectorAll('textarea[data-phase]')) {
-      if (input.getAttribute('placeholder') !== text) input.setAttribute('placeholder', text)
-    }
-    for (const el of document.querySelectorAll('[data-composer-placeholder]')) {
-      if (el.textContent !== text) el.textContent = text
-    }
-    for (const el of document.querySelectorAll('[contenteditable="true"][data-placeholder]')) {
-      if (el.getAttribute('data-placeholder') !== text) el.setAttribute('data-placeholder', text)
-    }
+    applyComposerPlaceholder('你想和' + name + '说什么呢？')
   }
   syncOfficialPlaceholder()
   const placeholderObserver = new MutationObserver((records) => {
