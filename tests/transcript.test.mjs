@@ -4,7 +4,7 @@ import {
   contentToText, assistantToText, partialToText, lineFromNode, nodesToLines,
   speakerFor, assistantSpeaker, playerSpeaker, welcomeLine, cleanDialogueText,
   playerDisplayName, assistantDisplayName, roleNameElement, partialStatus, deriveStatus,
-  stripMarkdown,
+  stripMarkdown, legacyToViewState,
 } from '../.dsh-plugin/client/transcript.mjs'
 import { defaultScene, normalizeScene } from '../.dsh-plugin/client/scene.mjs'
 
@@ -170,4 +170,30 @@ test('welcomeLine 拼接欢迎台词', () => {
   assert.ok(line.text.includes('测试连接已经建立'))
   const bare = normalizeScene({ settings: { welcome: [] }, elements: [] })
   assert.equal(welcomeLine(bare), null)
+})
+
+test('legacyToViewState:上游 legacy 兼容投影 → 旧式视图状态(带安全默认)', () => {
+  const nodes = [{ kind: 'user', seq: 1, time: 0, content: [{ type: 'text', text: '你好' }] }]
+  const turnEnds = new Map([[3, 40]])
+  const partial = { turn: 3, step: 0, blocks: [{ kind: 'text', text: '流式台词' }] }
+  const runningCalls = [{ id: 'c1', name: 'read' }]
+  const state = legacyToViewState({ nodes, turnEnds, partial, runningCalls })
+  assert.deepEqual(state.nodes, nodes)
+  assert.equal(state.turnEnds.get(3), 40)
+  assert.equal(state.partial, partial)
+  assert.deepEqual(state.runningCalls, runningCalls)
+  // 缺省/垃圾输入:全部安全默认
+  const empty = legacyToViewState(undefined)
+  assert.deepEqual(empty.nodes, [])
+  assert.equal(empty.partial, null)
+  assert.deepEqual(empty.runningCalls, [])
+  assert.equal(empty.turnEnds.size, 0)
+  const junk = legacyToViewState({ nodes: 'x', turnEnds: {}, partial: 'p', runningCalls: 7 })
+  assert.deepEqual(junk.nodes, [])
+  assert.equal(junk.partial, null)
+  assert.deepEqual(junk.runningCalls, [])
+  assert.equal(junk.turnEnds.size, 0)
+  // 与 lineFromNode 的兼容:legacy 节点直接出台词行,key 由 seq 稳定生成
+  const lines = nodesToLines(legacyToViewState({ nodes }).nodes)
+  assert.deepEqual(lines, [{ key: 'node-1', kind: 'player', text: '你好' }])
 })

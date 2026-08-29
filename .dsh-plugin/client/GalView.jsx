@@ -9,7 +9,7 @@ import { Editor } from './Editor.jsx'
 import { PendingPanel } from './PendingPanel.jsx'
 import { createTypeState, setTarget, skip, advance, SPEEDS } from './typewriter.mjs'
 import {
-  nodesToLines, partialToText, deriveActivity, speakerFor, welcomeLine, assistantDisplayName,
+  nodesToLines, partialToText, deriveActivity, speakerFor, welcomeLine, assistantDisplayName, legacyToViewState,
 } from './transcript.mjs'
 import { splitPages, createFitsMeasurer } from './paging.mjs'
 import { normalizePersona } from './persona.mjs'
@@ -535,9 +535,12 @@ class GalErrorBoundary extends React.Component {
 }
 
 /**
- * 填满会话区：挂载时隐藏会话外壳的输入席（data-composer-seat），让视窗占满整个
- * 会话主体（data-conversation-scroll）。GAL 视窗只在自身激活时被挂载，卸载（切回
- * 「对话」/「轨迹」标签）时恢复原状。找不到外壳（独立挂载/冒烟环境）时静默跳过。
+ * 填满会话区(上游 v0.1.2 适配版):
+ * 1. 隐藏会话外壳的输入席(data-composer-seat)并打 [data-gal-fills] 标记,
+ *    让视窗占满会话主体——GAL 用自带输入行,与官方输入席同管线镜像草稿;
+ * 2. 隐藏外壳的正文宽度拖拽手柄([data-width-handle],官方稳定属性),GAL 激活时
+ *    不出现拖拽与手柄;卸载(切回「对话」/「轨迹」)时全部恢复。
+ * 回合导航只渲染在 ChatView 内部,GAL 激活时天然不出现,无需处理。
  * @param rootRef - 视窗根节点。
  * @returns 恢复函数。
  */
@@ -557,11 +560,21 @@ function useFillSessionArea(rootRef) {
     scrollBody.style.overflow = 'hidden'
     scrollBody.style.position = 'relative'
     root.setAttribute('data-gal-fills', '')
+    // 隐藏宽度拖拽手柄(与隐藏输入席同生共死,随卸载恢复)。
+    const handles = scrollBody.parentElement?.querySelectorAll('[data-width-handle]') ?? []
+    const savedHandles = []
+    handles.forEach((el) => {
+      savedHandles.push([el, el.style.display])
+      el.style.display = 'none'
+    })
     return () => {
       seat.style.display = prev.seatDisplay
       scrollBody.style.overflow = prev.overflow
       scrollBody.style.position = prev.position
       root.removeAttribute('data-gal-fills')
+      savedHandles.forEach(([el, display]) => {
+        el.style.display = display
+      })
     }
   }, [rootRef])
 }
@@ -569,21 +582,26 @@ function useFillSessionArea(rootRef) {
 /**
  * GAL 视窗组件（conversation.view 槽位条目）。
  * @param props - 槽位框架注入：sessionId/useSession/useInput/inputActions + inject 面的 useScene/useHistory/api。
+ * 上游 v0.1.2 适配:对话行数据源从 SessionSnapshot 迁到 useChat 的 legacy 兼容投影。
  */
-export function GalView({ useSession, useInput, inputActions, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api }) {
+export function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api }) {
   const scene = useScene(s => s)
   const history = useHistory(h => h)
   const assets = useAssets(a => a)
   const fonts = useFonts(f => f)
   const readState = useStore(s => s)
-  const nodes = useSession(s => s.nodes)
-  const partial = useSession(s => s.partial)
+  // 顶层无条件调用(hook 顺序纪律):legacy 投影带全旧字段(nodes/turnEnds/partial/runningCalls)。
+  const legacySlice = typeof useChat === 'function' ? useChat(s => s.legacy) : undefined
+  const legacyView = useMemo(() => legacyToViewState(legacySlice), [legacySlice])
+  const nodes = legacyView.nodes
+  const partial = legacyView.partial
   const running = useSession(s => s.running)
   const blank = useSession(s => s.blank)
-  const runningCalls = useSession(s => s.runningCalls)
+  const runningCalls = legacyView.runningCalls
+  // pending 新家在 useSessionPendingInteraction(第二批适配);旧字段在新快照不存在 → 空,决策面板暂时不出现。
   const pending = useSession(s => s.pending)
   const promptError = useSession(s => s.promptError)
-  const turnEnds = useSession(s => s.turnEnds)
+  const turnEnds = legacyView.turnEnds
   // 自动存档状态(apply 级全局源)。必须在顶层无条件调用:条件调用 hook 会破坏
   // hook 顺序,设置面板打开时(settingsOpen 翻转)直接崩溃。
   const autoSaveStatusSnapshot = typeof useAutoSaveStatus === 'function' ? useAutoSaveStatus(s => s) : null

@@ -271,6 +271,23 @@ export function nodesToLines(nodes) {
   return out
 }
 
+/**
+ * 新版 useChat(s=>s.legacy) 兼容投影 → 旧式视图状态(带安全默认)。
+ * 上游 v0.1.2 起 SessionSnapshot 不再携带 nodes/turnEnds/partial/runningCalls,
+ * 官方在 ChatSnapshot 里保留 legacy 投影,条目形状与旧式一致(kind/seq/content/blocks,
+ * 实测 legacyContribution/rebuildFinalized:按 left.seq 排序)。本函数只做归一化,
+ * 不改变任何条目;gal-view 的 lineFromNode/partialToText/deriveActivity 直接消费。
+ */
+export function legacyToViewState(legacy) {
+  const src = legacy !== null && typeof legacy === 'object' ? legacy : {}
+  return {
+    nodes: Array.isArray(src.nodes) ? src.nodes : [],
+    turnEnds: src.turnEnds instanceof Map ? src.turnEnds : new Map(),
+    partial: src.partial !== null && typeof src.partial === 'object' ? src.partial : null,
+    runningCalls: Array.isArray(src.runningCalls) ? src.runningCalls : [],
+  }
+}
+
 /** 系统说话人的名字（对话框名牌据此隐藏；历史面板仍显示系统行标签）。 */
 export const SYSTEM_NAME = '系统'
 
