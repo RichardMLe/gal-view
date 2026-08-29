@@ -6,6 +6,14 @@
 // 实测版本:上游 v0.1.2-alpha.1(DSH Desktop v2.0.4,2026-08-29 取证)。
 // ============================================================================
 
+/** 从会话列表快照取当前会话 id(旧面 {current|currentId};兼容两字段名)。 */
+export function sessionOf(snapshot) {
+  if (snapshot === null || snapshot === undefined) return null
+  if (typeof snapshot.current === 'string' && snapshot.current !== '') return snapshot.current
+  if (typeof snapshot.currentId === 'string' && snapshot.currentId !== '') return snapshot.currentId
+  return null
+}
+
 /**
  * 契约快照:上游 v0.1.2 实测接口形状(数据本身,供契约测试断言与升级比对)。
  * 来源:
