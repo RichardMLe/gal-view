@@ -3519,6 +3519,41 @@ function questionCancelEnvelope() {
     }
   };
 }
+function respondApproval(wait, outcome) {
+  if (typeof wait.respond === "function") return wait.respond(approvalEnvelope(wait, outcome));
+  if (typeof wait.answer === "function") return wait.answer(outcome);
+  return Promise.reject(new Error("\u8F7D\u4F53\u65E0\u54CD\u5E94\u901A\u9053"));
+}
+function respondQuestion(wait, answers) {
+  if (typeof wait.respond === "function") return wait.respond(questionAnswerEnvelope(wait, answers));
+  if (typeof wait.answer === "function") return wait.answer({ answers });
+  return Promise.reject(new Error("\u8F7D\u4F53\u65E0\u54CD\u5E94\u901A\u9053"));
+}
+function cancelQuestion(wait) {
+  if (typeof wait.respond === "function") return wait.respond(questionCancelEnvelope());
+  if (typeof wait.cancel === "function") return wait.cancel();
+  return Promise.reject(new Error("\u8F7D\u4F53\u65E0\u54CD\u5E94\u901A\u9053"));
+}
+function questionsOf(wait) {
+  if (Array.isArray(wait.questions)) return wait.questions;
+  const payload = wait.payload;
+  if (payload !== null && typeof payload === "object" && Array.isArray(payload.questions)) return payload.questions;
+  return [];
+}
+function toolNameOf(wait) {
+  const name2 = typeof wait.toolName === "string" ? wait.toolName : "";
+  if (name2 !== "") return name2;
+  const payload = wait.payload;
+  if (payload !== null && typeof payload === "object" && typeof payload.toolName === "string") return payload.toolName;
+  return "";
+}
+function reasonOf(wait) {
+  const reason = typeof wait.reason === "string" ? wait.reason : "";
+  if (reason !== "") return reason;
+  const payload = wait.payload;
+  if (payload !== null && typeof payload === "object" && typeof payload.reason === "string") return payload.reason;
+  return "";
+}
 function emptyDrafts(questions) {
   return questions.map(() => ({ selected: [], custom: "", skipped: false }));
 }
@@ -3547,8 +3582,9 @@ function pendingItems(pending) {
   let list;
   if (Array.isArray(pending)) list = pending;
   else if (pending !== null && typeof pending === "object" && typeof pending.values === "function") list = [...pending.values()];
+  else if (pending !== null && pending !== void 0) list = [pending];
   else list = [];
-  return list.filter((wait) => wait !== null && typeof wait === "object" && (wait.kind === "approval" || wait.kind === "question") && typeof wait.respond === "function");
+  return list.filter((wait) => wait !== null && typeof wait === "object" && (wait.kind === "approval" || wait.kind === "question" || wait.kind === "plan-review") && (typeof wait.respond === "function" || wait.kind === "approval" && typeof wait.answer === "function" || (wait.kind === "question" || wait.kind === "plan-review") && Array.isArray(wait.questions) && typeof wait.answer === "function"));
 }
 function pocketArgs(payload) {
   if (payload === null || typeof payload !== "object") return null;
@@ -3623,18 +3659,18 @@ function ApprovalCard({ wait }) {
     if (busy) return;
     setBusy(true);
     setError(null);
-    wait.respond(approvalEnvelope(wait, outcome)).then(assertAccepted, (cause) => {
+    respondApproval(wait, outcome).then(assertAccepted, (cause) => {
       setBusy(false);
       setError(causeText(cause));
     });
   };
-  const toolName = typeof wait.payload.toolName === "string" && wait.payload.toolName !== "" ? wait.payload.toolName : "\u5DE5\u5177";
-  const reason = typeof wait.payload.reason === "string" && wait.payload.reason !== "" ? wait.payload.reason : toolName + " \u8BF7\u6C42\u8D8A\u6743\u6267\u884C\uFF0C\u9700\u8981\u4F60\u7684\u6279\u51C6\u3002";
-  const sceneText = approvalSceneText(toolName, wait.payload);
+  const toolName = toolNameOf(wait) !== "" ? toolNameOf(wait) : "\u5DE5\u5177";
+  const reason = reasonOf(wait) !== "" ? reasonOf(wait) : toolName + " \u8BF7\u6C42\u8D8A\u6743\u6267\u884C\uFF0C\u9700\u8981\u4F60\u7684\u6279\u51C6\u3002";
+  const sceneText = approvalSceneText(toolName, wait.payload !== null && typeof wait.payload === "object" ? wait.payload : { reason: reasonOf(wait) });
   return /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-approval", role: "dialog", "aria-label": "\u6279\u51C6\u8BF7\u6C42" }, /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-head" }, /* @__PURE__ */ import_react3.default.createElement(Corners, null), /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-head-row" }, /* @__PURE__ */ import_react3.default.createElement("span", { className: "gv-pending-title" }, "\u9700\u8981\u4F60\u7684\u6279\u51C6"), /* @__PURE__ */ import_react3.default.createElement("span", { className: "gv-pending-tag" }, toolName)), /* @__PURE__ */ import_react3.default.createElement("p", { className: "gv-pending-detail" }, sceneText), reason !== sceneText && /* @__PURE__ */ import_react3.default.createElement("p", { className: "gv-pending-reason" }, reason)), /* @__PURE__ */ import_react3.default.createElement(Divider, null), /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-options" }, /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option is-gold", disabled: busy, onClick: () => answer("allowed-once") }, "\u5141\u8BB8\u4E00\u6B21"), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option", disabled: busy, onClick: () => answer("rejected") }, "\u62D2\u7EDD")), error !== null && /* @__PURE__ */ import_react3.default.createElement("p", { className: "gv-pending-error" }, error));
 }
 function QuestionCard({ wait, onControl }) {
-  const questions = Array.isArray(wait.payload.questions) ? wait.payload.questions : [];
+  const questions = questionsOf(wait);
   const [flow, setFlow] = (0, import_react3.useState)(() => ({ index: 0, states: emptyDrafts(questions) }));
   const [busy, setBusy] = (0, import_react3.useState)(false);
   const [error, setError] = (0, import_react3.useState)(null);
@@ -3712,7 +3748,7 @@ function QuestionCard({ wait, onControl }) {
     }
     setBusy(true);
     setError(null);
-    wait.respond(questionAnswerEnvelope(wait, buildAnswers(questions, finalStates))).then(assertAccepted, (cause) => {
+    respondQuestion(wait, buildAnswers(questions, finalStates)).then(assertAccepted, (cause) => {
       setBusy(false);
       setError(causeText(cause));
     });
@@ -3727,7 +3763,7 @@ function QuestionCard({ wait, onControl }) {
     if (busy) return;
     setBusy(true);
     setError(null);
-    wait.respond(questionCancelEnvelope()).then(assertAccepted, (cause) => {
+    cancelQuestion(wait).then(assertAccepted, (cause) => {
       setBusy(false);
       setError(causeText(cause));
     });
@@ -3770,7 +3806,7 @@ function PendingPanel({ pending, onControl }) {
   const items = pendingItems(pending);
   if (items.length === 0) return null;
   const approval = items.find((wait) => wait.kind === "approval") ?? null;
-  const question = items.find((wait) => wait.kind === "question") ?? null;
+  const question = items.find((wait) => wait.kind === "question" || wait.kind === "plan-review") ?? null;
   return /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-layer", role: "region", "aria-label": "\u7B49\u5F85\u4F60\u7684\u51B3\u5B9A" }, /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-veil", "aria-hidden": "true" }), /* @__PURE__ */ import_react3.default.createElement("div", { className: "gv-pending-stack" }, approval !== null && /* @__PURE__ */ import_react3.default.createElement(ApprovalCard, { key: approval.key, wait: approval }), question !== null && /* @__PURE__ */ import_react3.default.createElement(QuestionCard, { key: question.key, wait: question, onControl })));
 }
 
@@ -3854,7 +3890,7 @@ function deriveActivity({ running, partial, pending = [], runningCalls = [], las
   const items = [];
   if (Array.isArray(pending)) {
     const approvals = pending.filter((wait) => wait !== null && typeof wait === "object" && wait.kind === "approval");
-    const questions = pending.filter((wait) => wait !== null && typeof wait === "object" && wait.kind === "question");
+    const questions = pending.filter((wait) => wait !== null && typeof wait === "object" && (wait.kind === "question" || wait.kind === "plan-review"));
     const seed = approvals[0]?.key ?? questions[0]?.key ?? "pending";
     if (approvals.length > 0) items.push({ kind: "waiting", text: waitApprovalLine(seed, personaCfg) });
     if (questions.length > 0) items.push({ kind: "waiting", text: waitQuestionLine(seed, personaCfg) });
@@ -4032,6 +4068,16 @@ var HOST_CONTRACT = Object.freeze({
   snapshotFields: ["sessionId", "queue", "pendingSubmissions", "running", "subagent", "removed", "openState", "openError", "hasMore", "loadingOlder", "promptError", "blank", "lastAgentError", "promptAttempted", "awaitingFirstTurn"],
   // ChatSnapshot.legacy 兼容投影字段(gal-view 对话数据源)
   legacyFields: ["nodes", "turnTimings", "turnEnds", "partial", "runningCalls"],
+  // 待决交互(批准/提问)新家:v0.1.2 起 SessionSnapshot 无 pending,
+  // uiSession.pendingInteractions 快照 Map<sessionId, interaction> 经
+  // useSessionPendingInteraction 读取(conversation.view 标准 prop)。interaction 实例:
+  // PendingApproval{kind:'approval',toolName,callId,reason,answer(outcome)}
+  // PendingQuestion{kind:'question'|'plan-review',questions,answer({answers}),cancel()}
+  // 来源:@deepseek-ai/dsh-client-ui-session(UiSession.pendingInteractions)
+  //      + dsh-client-ui-approval / dsh-client-ui-user-questions(Pending* 类)
+  pendingInteractionKinds: ["approval", "question", "plan-review"],
+  // 官方提问卡 DOM 标记(QuestionComposer frame;GAL 激活时防御性隐藏)
+  pendingQuestionKey: "data-question-key",
   // DOM 稳定属性(隐式契约,升级先查)
   dom: Object.freeze({
     conversationScroll: "data-conversation-scroll",
@@ -4125,12 +4171,21 @@ function hideShellChromeForGal(root) {
     savedHandles.push([el, el.style.display]);
     el.style.display = "none";
   });
+  const questionCards = document.querySelectorAll("[" + HOST_CONTRACT.pendingQuestionKey + "]");
+  const savedCards = [];
+  questionCards.forEach((el) => {
+    savedCards.push([el, el.style.display]);
+    el.style.display = "none";
+  });
   return () => {
     seat.style.display = prev.seatDisplay;
     scrollBody.style.overflow = prev.overflow;
     scrollBody.style.position = prev.position;
     root.removeAttribute(HOST_CONTRACT.dom.sessionAreaFills);
     savedHandles.forEach(([el, display]) => {
+      el.style.display = display;
+    });
+    savedCards.forEach(([el, display]) => {
       el.style.display = display;
     });
   };
@@ -4604,7 +4659,7 @@ var GalErrorBoundary = class extends import_react4.default.Component {
 function useFillSessionArea(rootRef) {
   (0, import_react4.useEffect)(() => hideShellChromeForGal(rootRef.current), [rootRef]);
 }
-function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api, sessionId }) {
+function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, useSessionPendingInteraction, actions, api, sessionId }) {
   const scene = useScene((s) => s);
   const history = useHistory((h) => h);
   const assets = useAssets((a) => a);
@@ -4622,7 +4677,16 @@ function GalView({ useSession, useInput, inputActions, useChat, useScene, useHis
   const running = useSession((s) => s.running);
   const blank = useSession((s) => s.blank);
   const runningCalls = legacyView.runningCalls;
-  const pending = useSession((s) => s.pending);
+  const pendingInteraction = typeof useSessionPendingInteraction === "function" ? useSessionPendingInteraction((snapshot) => {
+    if (typeof sessionId !== "string" || sessionId === "") return void 0;
+    if (snapshot === null || typeof snapshot.get !== "function") return void 0;
+    return snapshot.get(sessionId);
+  }) : void 0;
+  const legacyPending = useSession((s) => s.pending);
+  const pending = (0, import_react4.useMemo)(() => {
+    if (pendingInteraction !== null && pendingInteraction !== void 0) return [pendingInteraction];
+    return Array.isArray(legacyPending) ? legacyPending : [];
+  }, [pendingInteraction, legacyPending]);
   const promptError = useSession((s) => s.promptError);
   const turnEnds = legacyView.turnEnds;
   const autoSaveStatusSnapshot = typeof useAutoSaveStatus === "function" ? useAutoSaveStatus((s) => s) : null;

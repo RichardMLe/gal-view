@@ -46,6 +46,16 @@ export const HOST_CONTRACT = Object.freeze({
   snapshotFields: ['sessionId', 'queue', 'pendingSubmissions', 'running', 'subagent', 'removed', 'openState', 'openError', 'hasMore', 'loadingOlder', 'promptError', 'blank', 'lastAgentError', 'promptAttempted', 'awaitingFirstTurn'],
   // ChatSnapshot.legacy 兼容投影字段(gal-view 对话数据源)
   legacyFields: ['nodes', 'turnTimings', 'turnEnds', 'partial', 'runningCalls'],
+  // 待决交互(批准/提问)新家:v0.1.2 起 SessionSnapshot 无 pending,
+  // uiSession.pendingInteractions 快照 Map<sessionId, interaction> 经
+  // useSessionPendingInteraction 读取(conversation.view 标准 prop)。interaction 实例:
+  // PendingApproval{kind:'approval',toolName,callId,reason,answer(outcome)}
+  // PendingQuestion{kind:'question'|'plan-review',questions,answer({answers}),cancel()}
+  // 来源:@deepseek-ai/dsh-client-ui-session(UiSession.pendingInteractions)
+  //      + dsh-client-ui-approval / dsh-client-ui-user-questions(Pending* 类)
+  pendingInteractionKinds: ['approval', 'question', 'plan-review'],
+  // 官方提问卡 DOM 标记(QuestionComposer frame;GAL 激活时防御性隐藏)
+  pendingQuestionKey: 'data-question-key',
   // DOM 稳定属性(隐式契约,升级先查)
   dom: Object.freeze({
     conversationScroll: 'data-conversation-scroll',
@@ -140,7 +150,7 @@ export function waitSettledSnapshotOf(id, sessionSnapshot) {
 // DOM 钩子(全部走 HOST_CONTRACT.dom 的稳定属性;升级先查契约测试)
 // ----------------------------------------------------------------------------
 
-/** GAL 激活期间:隐藏官方输入席 + 正文宽度拖拽手柄,打 fills 标记;卸载恢复。
+/** GAL 激活期间:隐藏官方输入席 + 正文宽度拖拽手柄 + 官方提问卡(防御),打 fills 标记;卸载恢复。
  * 返回恢复函数;找不到外壳(独立挂载/冒烟)时静默跳过。 */
 export function hideShellChromeForGal(root) {
   if (root === null || root === undefined) return () => {}
@@ -166,12 +176,23 @@ export function hideShellChromeForGal(root) {
     savedHandles.push([el, el.style.display])
     el.style.display = 'none'
   })
+  // 防御:官方提问卡(QuestionComposer frame)若挂在输入席之外(浮动层),
+  // GAL 激活时一并隐藏——否则半透明对话框区域会透出官方卡片文字(8-29 反馈)。
+  const questionCards = document.querySelectorAll('[' + HOST_CONTRACT.pendingQuestionKey + ']')
+  const savedCards = []
+  questionCards.forEach((el) => {
+    savedCards.push([el, el.style.display])
+    el.style.display = 'none'
+  })
   return () => {
     seat.style.display = prev.seatDisplay
     scrollBody.style.overflow = prev.overflow
     scrollBody.style.position = prev.position
     root.removeAttribute(HOST_CONTRACT.dom.sessionAreaFills)
     savedHandles.forEach(([el, display]) => {
+      el.style.display = display
+    })
+    savedCards.forEach(([el, display]) => {
       el.style.display = display
     })
   }

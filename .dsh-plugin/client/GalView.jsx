@@ -539,7 +539,7 @@ function useFillSessionArea(rootRef) {
  * @param props - 槽位框架注入：sessionId/useSession/useInput/inputActions + inject 面的 useScene/useHistory/api。
  * 上游 v0.1.2 适配:对话行数据源从 SessionSnapshot 迁到 useChat 的 legacy 兼容投影。
  */
-export function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api, sessionId }) {
+export function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, useSessionPendingInteraction, actions, api, sessionId }) {
   const scene = useScene(s => s)
   const history = useHistory(h => h)
   const assets = useAssets(a => a)
@@ -559,8 +559,22 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
   const running = useSession(s => s.running)
   const blank = useSession(s => s.blank)
   const runningCalls = legacyView.runningCalls
-  // pending 新家在 useSessionPendingInteraction(第二批适配);旧字段在新快照不存在 → 空,决策面板暂时不出现。
-  const pending = useSession(s => s.pending)
+  // pending 新家在 useSessionPendingInteraction(v0.1.2 起:SessionSnapshot 不再有 pending;
+  // 官方把待决交互移入 uiSession.pendingInteractions 快照 Map<sessionId, interaction>,
+  // 值是 PendingApproval/PendingQuestion 实例,动词 answer/cancel)。旧字段在新快照不存在 → 空,兜底保留。
+  // 顶层无条件调用(hook 顺序纪律)。
+  const pendingInteraction = typeof useSessionPendingInteraction === 'function'
+    ? useSessionPendingInteraction((snapshot) => {
+        if (typeof sessionId !== 'string' || sessionId === '') return undefined
+        if (snapshot === null || typeof snapshot.get !== 'function') return undefined
+        return snapshot.get(sessionId)
+      })
+    : undefined
+  const legacyPending = useSession(s => s.pending)
+  const pending = useMemo(() => {
+    if (pendingInteraction !== null && pendingInteraction !== undefined) return [pendingInteraction]
+    return Array.isArray(legacyPending) ? legacyPending : []
+  }, [pendingInteraction, legacyPending])
   const promptError = useSession(s => s.promptError)
   const turnEnds = legacyView.turnEnds
   // 自动存档状态(apply 级全局源)。必须在顶层无条件调用:条件调用 hook 会破坏

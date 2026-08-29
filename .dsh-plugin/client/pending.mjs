@@ -2,9 +2,13 @@
 // 信封形状对齐官方 dsh-client-ui-conversation（PendingApproval）与
 // dsh-client-ui-user-questions（PendingQuestion），走同一 wire 通道。
 //
-// 载体即会话快照 s.pending 里的 PendingWait：
+// 载体双形状（升级前/后,实测 v0.1.2）:
+// 旧式(会话快照 s.pending 条目):
 //   { kind: 'approval' | 'question', key, sessionId, payload, respond(result) }
-// 只读 leaf 字段、调用 respond；不序列化、不复制整个载体。
+// 新式(useSessionPendingInteraction 快照 Map<sessionId, interaction> 的值):
+//   PendingApproval  { kind:'approval',  key, sessionId, toolName, callId, reason, answer(outcome), delegate() }
+//   PendingQuestion  { kind:'question'|'plan-review', key, sessionId, questions, answer({answers}), cancel(), delegate() }
+// 只读 leaf 字段、按形状分派动词；不序列化、不复制整个载体。
 
 /** 批准信封。outcome ∈ 'allowed-once' | 'rejected'（官方枚举）。 */
 export function approvalEnvelope(wait, outcome) {
@@ -39,6 +43,53 @@ export function questionCancelEnvelope() {
       details: {},
     },
   }
+}
+
+/** 批准应答（双形状分派）：旧式 respond(信封) / 新式 answer(直接 outcome)。 */
+export function respondApproval(wait, outcome) {
+  if (typeof wait.respond === 'function') return wait.respond(approvalEnvelope(wait, outcome))
+  if (typeof wait.answer === 'function') return wait.answer(outcome)
+  return Promise.reject(new Error('载体无响应通道'))
+}
+
+/** 提问应答（双形状分派）：旧式 respond(信封) / 新式 answer({ answers })。 */
+export function respondQuestion(wait, answers) {
+  if (typeof wait.respond === 'function') return wait.respond(questionAnswerEnvelope(wait, answers))
+  if (typeof wait.answer === 'function') return wait.answer({ answers })
+  return Promise.reject(new Error('载体无响应通道'))
+}
+
+/** 取消提问（双形状分派）：旧式 respond(取消信封) / 新式 cancel()。 */
+export function cancelQuestion(wait) {
+  if (typeof wait.respond === 'function') return wait.respond(questionCancelEnvelope())
+  if (typeof wait.cancel === 'function') return wait.cancel()
+  return Promise.reject(new Error('载体无响应通道'))
+}
+
+/** 载体问题批次（双形状）：新式 questions 直挂 / 旧式 payload.questions。 */
+export function questionsOf(wait) {
+  if (Array.isArray(wait.questions)) return wait.questions
+  const payload = wait.payload
+  if (payload !== null && typeof payload === 'object' && Array.isArray(payload.questions)) return payload.questions
+  return []
+}
+
+/** 载体工具名（双形状）。 */
+export function toolNameOf(wait) {
+  const name = typeof wait.toolName === 'string' ? wait.toolName : ''
+  if (name !== '') return name
+  const payload = wait.payload
+  if (payload !== null && typeof payload === 'object' && typeof payload.toolName === 'string') return payload.toolName
+  return ''
+}
+
+/** 载体批准原因（双形状）。 */
+export function reasonOf(wait) {
+  const reason = typeof wait.reason === 'string' ? wait.reason : ''
+  if (reason !== '') return reason
+  const payload = wait.payload
+  if (payload !== null && typeof payload === 'object' && typeof payload.reason === 'string') return payload.reason
+  return ''
 }
 
 /** 初始草稿：每题 { selected: [], custom: '', skipped: false }。 */
@@ -81,15 +132,19 @@ export function buildAnswers(questions, drafts) {
   })
 }
 
-/** 面板可见的载体列表（数组或 Map 皆可；只保留批准/提问两类）。 */
+/** 面板可见的载体列表（数组 / Map / 单个交互对象皆可；只保留批准/提问两类）。
+ * 兼容旧式 s.pending 条目(respond)与新式 pendingInteraction 实例(answer/cancel)。 */
 export function pendingItems(pending) {
   let list
   if (Array.isArray(pending)) list = pending
   else if (pending !== null && typeof pending === 'object' && typeof pending.values === 'function') list = [...pending.values()]
+  else if (pending !== null && pending !== undefined) list = [pending]
   else list = []
   return list.filter(wait => wait !== null && typeof wait === 'object'
-    && (wait.kind === 'approval' || wait.kind === 'question')
-    && typeof wait.respond === 'function')
+    && (wait.kind === 'approval' || wait.kind === 'question' || wait.kind === 'plan-review')
+    && (typeof wait.respond === 'function'
+      || (wait.kind === 'approval' && typeof wait.answer === 'function')
+      || ((wait.kind === 'question' || wait.kind === 'plan-review') && Array.isArray(wait.questions) && typeof wait.answer === 'function')))
 }
 
 /** 从批准载体参数里解析 JSON（argsRaw/arguments/params/args；非 JSON 返回 null）。 */

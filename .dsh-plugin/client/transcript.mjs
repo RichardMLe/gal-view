@@ -167,7 +167,7 @@ export function deriveActivity({ running, partial, pending = [], runningCalls = 
   // 等待批准/回答优先置顶（种子取首个载体的 key，流式期间台词稳定）。
   if (Array.isArray(pending)) {
     const approvals = pending.filter(wait => wait !== null && typeof wait === 'object' && wait.kind === 'approval')
-    const questions = pending.filter(wait => wait !== null && typeof wait === 'object' && wait.kind === 'question')
+    const questions = pending.filter(wait => wait !== null && typeof wait === 'object' && (wait.kind === 'question' || wait.kind === 'plan-review'))
     const seed = approvals[0]?.key ?? questions[0]?.key ?? 'pending'
     if (approvals.length > 0) items.push({ kind: 'waiting', text: persona.waitApprovalLine(seed, personaCfg) })
     if (questions.length > 0) items.push({ kind: 'waiting', text: persona.waitQuestionLine(seed, personaCfg) })

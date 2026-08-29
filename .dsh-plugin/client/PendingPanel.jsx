@@ -10,9 +10,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  approvalEnvelope, questionAnswerEnvelope, questionCancelEnvelope,
   emptyDrafts, draftAnswered, draftsComplete, buildAnswers, pendingItems,
   toggleSelected, approvalSceneText,
+  respondApproval, respondQuestion, cancelQuestion, questionsOf, toolNameOf, reasonOf,
 } from './pending.mjs'
 
 /** 响应失败的可读信息。 */
@@ -58,17 +58,17 @@ function ApprovalCard({ wait }) {
     if (busy) return
     setBusy(true)
     setError(null)
-    wait.respond(approvalEnvelope(wait, outcome)).then(assertAccepted, (cause) => {
+    respondApproval(wait, outcome).then(assertAccepted, (cause) => {
       setBusy(false)
       setError(causeText(cause))
     })
   }
-  const toolName = typeof wait.payload.toolName === 'string' && wait.payload.toolName !== '' ? wait.payload.toolName : '工具'
-  const reason = typeof wait.payload.reason === 'string' && wait.payload.reason !== ''
-    ? wait.payload.reason
+  const toolName = toolNameOf(wait) !== '' ? toolNameOf(wait) : '工具'
+  const reason = reasonOf(wait) !== ''
+    ? reasonOf(wait)
     : toolName + ' 请求越权执行，需要你的批准。'
   // 游戏化请求文案（读/写/命令分类 + 参数摘要，绝不回显代码/JSON）；原始原因保留为次级小字。
-  const sceneText = approvalSceneText(toolName, wait.payload)
+  const sceneText = approvalSceneText(toolName, wait.payload !== null && typeof wait.payload === 'object' ? wait.payload : { reason: reasonOf(wait) })
   return (
     <div className="gv-pending-approval" role="dialog" aria-label="批准请求">
       <div className="gv-pending-head">
@@ -97,7 +97,7 @@ function ApprovalCard({ wait }) {
  * 提交入口经 onControl 交给 GalView 的输入框按钮。
  */
 function QuestionCard({ wait, onControl }) {
-  const questions = Array.isArray(wait.payload.questions) ? wait.payload.questions : []
+  const questions = questionsOf(wait)
   const [flow, setFlow] = useState(() => ({ index: 0, states: emptyDrafts(questions) }))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -186,7 +186,7 @@ function QuestionCard({ wait, onControl }) {
     }
     setBusy(true)
     setError(null)
-    wait.respond(questionAnswerEnvelope(wait, buildAnswers(questions, finalStates))).then(assertAccepted, (cause) => {
+    respondQuestion(wait, buildAnswers(questions, finalStates)).then(assertAccepted, (cause) => {
       setBusy(false)
       setError(causeText(cause))
     })
@@ -205,7 +205,7 @@ function QuestionCard({ wait, onControl }) {
     if (busy) return
     setBusy(true)
     setError(null)
-    wait.respond(questionCancelEnvelope()).then(assertAccepted, (cause) => {
+    cancelQuestion(wait).then(assertAccepted, (cause) => {
       setBusy(false)
       setError(causeText(cause))
     })
@@ -286,7 +286,8 @@ export function PendingPanel({ pending, onControl }) {
   const items = pendingItems(pending)
   if (items.length === 0) return null
   const approval = items.find(wait => wait.kind === 'approval') ?? null
-  const question = items.find(wait => wait.kind === 'question') ?? null
+  // 计划待审(plan-review)与提问同卡片渲染(问题+选项,answer 批次同通道)。
+  const question = items.find(wait => wait.kind === 'question' || wait.kind === 'plan-review') ?? null
   return (
     <div className="gv-pending-layer" role="region" aria-label="等待你的决定">
       <div className="gv-pending-veil" aria-hidden="true" />
