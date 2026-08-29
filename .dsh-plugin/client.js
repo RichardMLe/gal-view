@@ -763,8 +763,8 @@ var CSS = `
 .gv-pending-option.is-choice.is-selected {
   filter: brightness(1.48) drop-shadow(0 0 20px rgba(238, 210, 153, .7));
 }
-/* \u8F93\u5165 + \u63D0\u4EA4\u6574\u5408\u7684\u7EC4\u5408\u9009\u9879\u6846\uFF1A\u5DE6\u8FB9\u6587\u672C\u8F93\u5165\uFF0C\u53F3\u8FB9\u63D0\u4EA4\u6309\u94AE\uFF08\u540C\u6B3E\u91D1\u6846\uFF0Cfill \u65B9\u5F0F\u4E0E\u9009\u9879\u4E00\u81F4\uFF0C
- * \u65E0\u534A\u900F\u660E\u5E95\u2014\u2014\u4E2D\u95F4\u9762\u7531\u91D1\u6846\u56FE\u7247\u81EA\u8EAB\u63D0\u4F9B\uFF0C\u7F16\u8F91\u6846\u81EA\u7136\u5D4C\u5165\uFF09\u3002 */
+/* \u81EA\u5B9A\u4E49\u56DE\u7B54\u8F93\u5165\u6846\uFF1A\u540C\u6B3E\u91D1\u6846\u3001fill \u65B9\u5F0F\u4E0E\u9009\u9879\u4E00\u81F4(\u65E0\u534A\u900F\u660E\u5E95\u2014\u2014\u4E2D\u95F4\u9762\u7531\u91D1\u6846\u56FE\u7247
+ * \u81EA\u8EAB\u63D0\u4F9B,\u7F16\u8F91\u6846\u81EA\u7136\u5D4C\u5165)\u3002\u65E0\u63D0\u4EA4\u6309\u94AE(\u9632\u8BEF\u70B9\u63D0\u524D\u63D0\u4EA4):\u56DE\u8F66\u63D0\u4EA4,\u591A\u9009\u9760\u672B\u9898\u300C\u786E\u5B9A\u300D\u3002 */
 .gv-pending-answer {
   display: flex; align-items: stretch; gap: 8px;
   box-sizing: border-box;
@@ -788,20 +788,6 @@ var CSS = `
 }
 .gv-pending-answer-input:focus { border-color: rgba(197, 164, 104, .65); }
 .gv-pending-answer-input::placeholder { color: var(--gv-text-dim); }
-.gv-pending-answer-submit {
-  flex: none;
-  border: 1px solid rgba(197, 164, 104, .8); border-radius: 4px;
-  background: linear-gradient(180deg, rgba(32, 49, 112, .85), rgba(24, 38, 88, .88));
-  color: #eef1fb; font-family: inherit; font-size: 14px; letter-spacing: .08em;
-  padding: 0 22px; cursor: pointer;
-  transition: border-color .15s ease, box-shadow .15s ease, color .15s ease;
-}
-.gv-pending-answer-submit:hover:not(:disabled) {
-  border-color: #e2cfaa;
-  box-shadow: 0 0 12px rgba(197, 164, 104, .35);
-  color: #fff;
-}
-.gv-pending-answer-submit:disabled { opacity: .5; cursor: default; }
 .gv-pending-error {
   margin: 10px 0 0; font-size: 13px; color: var(--gv-accent-red);
   line-height: 1.6; text-align: center;
@@ -3789,7 +3775,7 @@ function QuestionCard({ wait, onControl }) {
     {
       className: "gv-pending-answer-input",
       rows: 1,
-      placeholder: "\u6216\u8F93\u5165\u4F60\u7684\u56DE\u7B54\u2026\u2026",
+      placeholder: "\u6216\u8F93\u5165\u4F60\u7684\u56DE\u7B54,\u6309\u56DE\u8F66\u63D0\u4EA4\u2026\u2026",
       ref: answerRef,
       defaultValue: "",
       disabled: busy,
@@ -3800,7 +3786,7 @@ function QuestionCard({ wait, onControl }) {
         }
       }
     }
-  ), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-answer-submit", disabled: busy, onClick: submit }, "\u63D0\u4EA4")), multi && !notLast && /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option is-gold", disabled: busy, onClick: submit }, "\u786E\u5B9A"), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option", disabled: busy, onClick: skip2 }, "\u5148\u8DF3\u8FC7"), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option", disabled: busy, onClick: cancel }, "\u7B97\u4E86")), error !== null && /* @__PURE__ */ import_react3.default.createElement("p", { className: "gv-pending-error" }, error));
+  )), multi && !notLast && /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option is-gold", disabled: busy, onClick: submit }, "\u786E\u5B9A"), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option", disabled: busy, onClick: skip2 }, "\u5148\u8DF3\u8FC7"), /* @__PURE__ */ import_react3.default.createElement("button", { type: "button", className: "gv-pending-option", disabled: busy, onClick: cancel }, "\u7B97\u4E86")), error !== null && /* @__PURE__ */ import_react3.default.createElement("p", { className: "gv-pending-error" }, error));
 }
 function PendingPanel({ pending, onControl }) {
   const items = pendingItems(pending);

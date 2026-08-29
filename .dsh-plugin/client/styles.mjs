@@ -721,8 +721,8 @@ export const CSS = `
 .gv-pending-option.is-choice.is-selected {
   filter: brightness(1.48) drop-shadow(0 0 20px rgba(238, 210, 153, .7));
 }
-/* 输入 + 提交整合的组合选项框：左边文本输入，右边提交按钮（同款金框，fill 方式与选项一致，
- * 无半透明底——中间面由金框图片自身提供，编辑框自然嵌入）。 */
+/* 自定义回答输入框：同款金框、fill 方式与选项一致(无半透明底——中间面由金框图片
+ * 自身提供,编辑框自然嵌入)。无提交按钮(防误点提前提交):回车提交,多选靠末题「确定」。 */
 .gv-pending-answer {
   display: flex; align-items: stretch; gap: 8px;
   box-sizing: border-box;
@@ -746,20 +746,6 @@ export const CSS = `
 }
 .gv-pending-answer-input:focus { border-color: rgba(197, 164, 104, .65); }
 .gv-pending-answer-input::placeholder { color: var(--gv-text-dim); }
-.gv-pending-answer-submit {
-  flex: none;
-  border: 1px solid rgba(197, 164, 104, .8); border-radius: 4px;
-  background: linear-gradient(180deg, rgba(32, 49, 112, .85), rgba(24, 38, 88, .88));
-  color: #eef1fb; font-family: inherit; font-size: 14px; letter-spacing: .08em;
-  padding: 0 22px; cursor: pointer;
-  transition: border-color .15s ease, box-shadow .15s ease, color .15s ease;
-}
-.gv-pending-answer-submit:hover:not(:disabled) {
-  border-color: #e2cfaa;
-  box-shadow: 0 0 12px rgba(197, 164, 104, .35);
-  color: #fff;
-}
-.gv-pending-answer-submit:disabled { opacity: .5; cursor: default; }
 .gv-pending-error {
   margin: 10px 0 0; font-size: 13px; color: var(--gv-accent-red);
   line-height: 1.6; text-align: center;

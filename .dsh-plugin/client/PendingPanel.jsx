@@ -251,12 +251,13 @@ function QuestionCard({ wait, onControl }) {
         {multi && notLast && (
           <button type="button" className="gv-pending-option is-gold" disabled={busy} onClick={next}>下一题</button>
         )}
-        {/* 输入 + 提交整合的组合选项框：左边文本输入，右边提交。 */}
+        {/* 自定义回答输入框(无提交按钮,防误点提前提交):回车提交;
+            多选靠末题「确定」提交(提交时固化输入文本),单选点选项即答/回车提交。 */}
         <div className="gv-pending-option gv-pending-answer">
           <textarea
             className="gv-pending-answer-input"
             rows={1}
-            placeholder="或输入你的回答……"
+            placeholder="或输入你的回答,按回车提交……"
             ref={answerRef}
             defaultValue=""
             disabled={busy}
@@ -267,7 +268,6 @@ function QuestionCard({ wait, onControl }) {
               }
             }}
           />
-          <button type="button" className="gv-pending-answer-submit" disabled={busy} onClick={submit}>提交</button>
         </div>
         {/* 多选末题的「确定」（=提交）；单选无需（点击即答）。 */}
         {multi && !notLast && (
