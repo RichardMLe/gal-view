@@ -342,7 +342,7 @@ try {
   if (fakeFiles.has(pfsAuto.id + '.zip')) { console.error('FAIL skipZip must not write zip'); process.exit(1) }
   console.log('skipZip ok:', pfsAuto.id)
 
-  // —— 对话栏完整性检查:窗口尾部落后持久日志 >8 → 自动 resync 恢复 ——
+  // —— 对话栏完整性检查:上游 v0.1.2 起只记录、绝不干预(不 resync)——
   listCurrent = 's-root'
   windowTailSeq = 60
   const intactBefore = resyncCalls.length
@@ -350,9 +350,9 @@ try {
   if (intactResult !== false || resyncCalls.length !== intactBefore) { console.error('FAIL integrity: healthy window should not resync'); process.exit(1) }
   windowTailSeq = 20
   const brokenResult = await registeredApi.checkConversationIntegrity()
-  if (brokenResult !== true || !resyncCalls.includes('s-root')) { console.error('FAIL integrity: truncated window should resync'); process.exit(1) }
+  if (brokenResult !== false || resyncCalls.length !== intactBefore) { console.error('FAIL integrity: truncated window must NOT resync (log-only)'); process.exit(1) }
   windowTailSeq = 60
-  console.log('conversation integrity check ok')
+  console.log('conversation integrity check ok (log-only, no resync)')
 
   // —— 旧式槽迁移(P4):按钮触发 → 进度 → 完成后旧槽名录清空、迁移条目并入列表 ——
   const progress = []

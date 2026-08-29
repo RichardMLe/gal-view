@@ -1166,9 +1166,11 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       return assistantDisplayName(sceneSource.getSnapshot())
     },
     /** 对话栏完整性检查(操作后自动调用):官方窗口可能因瞬时序列断档被重装成
-     * 不完整尾部(早前对话从「对话」栏消失)。比对持久日志尾部 seq 与窗口尾部 seq,
-     * 差距过大且会话已落定时自动 resync 重装窗口(官方重连原语)。
-     * 返回 true 表示执行了恢复。 */
+     * 不完整尾部(早前对话从「对话」栏消失)。
+     * 上游 v0.1.2 加固:本函数**只记录、绝不干预**——新运行时自带 torn-tail
+     * 修复与窗口 replace 机制,我们对它的触发语义没有完整理解,任何 resync/
+     * 重装原语都可能再次成为"对话消失"的共犯(历史教训:看门狗只记录不干预)。
+     * 检测到疑似截断时仅输出可读日志供诊断。返回 false 恒成立(未执行恢复)。 */
     async checkConversationIntegrity() {
       const id = this.currentSessionId()
       if (id === null) return false
@@ -1186,11 +1188,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           : null
         if (windowTail === null) return false
         if (transcript.atSeq - windowTail > 8) {
-          console.warn('[gal-view:watchdog] 检测到对话窗口被截断(持久尾部 ' + transcript.atSeq + ' vs 窗口尾部 ' + windowTail + '),自动重装窗口恢复')
-          if (typeof session.resync === 'function') {
-            await session.resync()
-            return true
-          }
+          // 只记录:曾在这里调用 session.resync() 重装窗口,该干预在新运行时
+          // (窗口 replace/官方尾部修复)语义未知,已移除——绝不主动触碰官方窗口。
+          console.warn('[gal-view:watchdog] 检测到对话窗口可能被截断(持久尾部 ' + transcript.atSeq + ' vs 窗口尾部 ' + windowTail + ')。仅记录不干预;如对话确实缺失,请刷新页面或向 dsh-desktop 反馈。')
         }
       } catch (cause) {
         console.warn('[gal-view:watchdog] 完整性检查失败:', cause)
