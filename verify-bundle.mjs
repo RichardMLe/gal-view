@@ -257,9 +257,9 @@ try {
     assistantName: '雾子', turns: 7,
     lines: [{ kind: 'player', text: '你好' }, { kind: 'assistant', text: '你好呀\n第二行' }],
   })
-  if (saved.id !== '深海脑-save1' || saved.title !== '深海脑-save1') { console.error('FAIL saveSlotFile id/title: ' + JSON.stringify(saved)); process.exit(1) }
+  if (!saved.ok || saved.value.id !== '深海脑-save1' || saved.value.title !== '深海脑-save1') { console.error('FAIL saveSlotFile id/title: ' + JSON.stringify(saved)); process.exit(1) }
   if (!fakeFiles.has('深海脑-save1.md')) { console.error('FAIL saveSlotFile file not written'); process.exit(1) }
-  console.log('saveSlotFile ok:', saved.id)
+  console.log('saveSlotFile ok:', saved.value.id)
 
   const fileList = await registeredApi.listFileSlots()
   console.log('listFileSlots:', JSON.stringify(fileList))
@@ -268,7 +268,7 @@ try {
   // 自动档:两次存档,第二次清理第一次(仅保留最新)
   const auto1 = await registeredApi.saveSlotFile({ auto: true, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: 'a' }] })
   const auto2 = await registeredApi.saveSlotFile({ auto: true, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: 'b' }] })
-  if (auto1.id !== '深海脑-自动1' || auto2.id !== '深海脑-自动2') { console.error('FAIL auto naming: ' + auto1.id + '/' + auto2.id); process.exit(1) }
+  if (!auto1.ok || !auto2.ok || auto1.value.id !== '深海脑-自动1' || auto2.value.id !== '深海脑-自动2') { console.error('FAIL auto naming: ' + JSON.stringify(auto1) + '/' + JSON.stringify(auto2)); process.exit(1) }
   if (fakeFiles.has('深海脑-自动1.md')) { console.error('FAIL old auto file not cleaned'); process.exit(1) }
   const autoList = await registeredApi.listFileSlots()
   if (autoList.autos.length !== 1 || autoList.autos[0].id !== '深海脑-自动2') { console.error('FAIL auto list: ' + JSON.stringify(autoList.autos)); process.exit(1) }
@@ -277,9 +277,9 @@ try {
   const beforeLoadArchive = archiveCalls.length
   const forkCallsBefore = forkCalls.length
   const loaded = await registeredApi.loadSaveFile('深海脑-save1')
-  console.log('loadSaveFile forkCalls:', JSON.stringify(forkCalls.slice(forkCallsBefore)), 'mode:', loaded.mode)
+  console.log('loadSaveFile forkCalls:', JSON.stringify(forkCalls.slice(forkCallsBefore)), 'mode:', loaded.value?.mode)
   if (forkCalls[forkCallsBefore]?.atSeq !== 42 || forkCalls[forkCallsBefore]?.sessionId !== 's-root') { console.error('FAIL loadSaveFile fork payload: ' + JSON.stringify(forkCalls[forkCallsBefore])); process.exit(1) }
-  if (loaded.mode !== 'fork' || loaded.childId !== 's-new-' + (forkSeq)) { console.error('FAIL loadSaveFile fork result: ' + JSON.stringify(loaded)); process.exit(1) }
+  if (!loaded.ok || loaded.value.mode !== 'fork' || loaded.value.childId !== 's-new-' + (forkSeq)) { console.error('FAIL loadSaveFile fork result: ' + JSON.stringify(loaded)); process.exit(1) }
   // 测试期:旧线不归档
   if (archiveCalls.length !== beforeLoadArchive) { console.error('FAIL loadSaveFile archived while testing'); process.exit(1) }
 
@@ -287,14 +287,14 @@ try {
   forkReject = true
   const injected = await registeredApi.loadSaveFile('深海脑-save1')
   forkReject = false
-  console.log('loadSaveFile(inject) mode:', injected.mode, 'childId:', injected.childId)
-  if (injected.mode !== 'inject' || injected.childId !== 's-created-1') { console.error('FAIL inject fallback: ' + JSON.stringify(injected)); process.exit(1) }
-  if (typeof injected.recordText !== 'string' || !injected.recordText.includes('你好呀')) { console.error('FAIL inject recordText'); process.exit(1) }
+  console.log('loadSaveFile(inject) mode:', injected.value?.mode, 'childId:', injected.value?.childId)
+  if (!injected.ok || injected.value.mode !== 'inject' || injected.value.childId !== 's-created-1') { console.error('FAIL inject fallback: ' + JSON.stringify(injected)); process.exit(1) }
+  if (typeof injected.value.recordText !== 'string' || !injected.value.recordText.includes('你好呀')) { console.error('FAIL inject recordText'); process.exit(1) }
   if (!openCalls.includes('s-created-1')) { console.error('FAIL inject open'); process.exit(1) }
 
   // —— 删除文件存档 ——
   const removed = await registeredApi.deleteSlotFile('深海脑-save1')
-  if (removed !== true || fakeFiles.has('深海脑-save1.md')) { console.error('FAIL deleteSlotFile'); process.exit(1) }
+  if (!removed.ok || removed.value !== true || fakeFiles.has('深海脑-save1.md')) { console.error('FAIL deleteSlotFile'); process.exit(1) }
   const afterDelete = await registeredApi.listFileSlots()
   if (afterDelete.saves.length !== 0) { console.error('FAIL list after delete'); process.exit(1) }
   console.log('deleteSlotFile ok')
@@ -302,11 +302,11 @@ try {
   // —— 世界线脱钩:存档会话不在当前主线祖先链上 → 绝不 fork,降级注入 ——
   const detached = await registeredApi.saveSlotFile({ auto: false, rootTitle: '深海脑探案', sessionId: 's-other', atSeq: 99, assistantName: '雾子', turns: 1, lines: [{ kind: 'player', text: '另一条线' }] })
   const forkBeforeDetached = forkCalls.length
-  const detachedLoaded = await registeredApi.loadSaveFile(detached.id)
-  console.log('loadSaveFile(detached) mode:', detachedLoaded.mode)
-  if (detachedLoaded.mode !== 'inject') { console.error('FAIL worldline-detached should inject: ' + JSON.stringify(detachedLoaded)); process.exit(1) }
+  const detachedLoaded = await registeredApi.loadSaveFile(detached.value.id)
+  console.log('loadSaveFile(detached) mode:', detachedLoaded.value?.mode)
+  if (!detachedLoaded.ok || detachedLoaded.value.mode !== 'inject') { console.error('FAIL worldline-detached should inject: ' + JSON.stringify(detachedLoaded)); process.exit(1) }
   if (forkCalls.length !== forkBeforeDetached) { console.error('FAIL worldline-detached must not fork'); process.exit(1) }
-  await registeredApi.deleteSlotFile(detached.id)
+  await registeredApi.deleteSlotFile(detached.value.id)
   console.log('worldline-detached ok')
 
   // —— zip 双文件:带官方日志 zip 的存档 → md+zip 成对写入;删除成对删除 ——
@@ -314,12 +314,12 @@ try {
     auto: false, rootTitle: '深海脑探案', sessionId: 's-root', atSeq: 42, assistantName: '雾子', turns: 2,
     lines: [{ kind: 'player', text: 'z' }], complete: true, zip: new Uint8Array([1, 2, 3]), exportNote: '',
   })
-  if (withZip.id !== '深海脑-save1') { console.error('FAIL zip save id: ' + JSON.stringify(withZip)); process.exit(1) }
+  if (!withZip.ok || withZip.value.id !== '深海脑-save1') { console.error('FAIL zip save id: ' + JSON.stringify(withZip)); process.exit(1) }
   if (!fakeFiles.has('深海脑-save1.md') || !fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip+md pair not written'); process.exit(1) }
   const withZipList = await registeredApi.listFileSlots()
   if (withZipList.broken.some(b => String(b).includes('深海脑-save1.zip'))) { console.error('FAIL paired zip flagged broken: ' + JSON.stringify(withZipList.broken)); process.exit(1) }
-  const withZipRemoved = await registeredApi.deleteSlotFile(withZip.id)
-  if (!withZipRemoved || fakeFiles.has('深海脑-save1.md') || fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip pair delete'); process.exit(1) }
+  const withZipRemoved = await registeredApi.deleteSlotFile(withZip.value.id)
+  if (!withZipRemoved.ok || withZipRemoved.value !== true || fakeFiles.has('深海脑-save1.md') || fakeFiles.has('深海脑-save1.zip')) { console.error('FAIL zip pair delete'); process.exit(1) }
   console.log('zip pair ok')
 
   // —— 孤儿 zip:只有 zip 没有 md → 计入无法识别 ——
@@ -330,10 +330,9 @@ try {
   fakeFiles.delete('深海脑-save99.zip')
   console.log('orphan zip ok')
 
-  // —— 导出接口:无 fetch 环境应明确报错(调用方走兜底) ——
-  let exportThrew = false
-  try { await registeredApi.exportSessionLog('s-root') } catch { exportThrew = true }
-  if (!exportThrew) { console.error('FAIL exportSessionLog should throw without fetch'); process.exit(1) }
+  // —— 导出接口:无 fetch 环境应明确失败(口径 B1:Result,调用方走兜底) ——
+  const exportResult = await registeredApi.exportSessionLog('s-root')
+  if (exportResult.ok !== false || typeof exportResult.reason !== 'string') { console.error('FAIL exportSessionLog should fail without fetch'); process.exit(1) }
   console.log('exportSessionLog fallback ok')
 
   // —— performFileSave:P2 真实总回合数(15,来自 history 转写)+ atSeq=history 尾部 seq ——
@@ -384,7 +383,7 @@ try {
   // —— 旧式槽迁移(P4):按钮触发 → 进度 → 完成后旧槽名录清空、迁移条目并入列表 ——
   const progress = []
   const mig = await registeredApi.migrateLegacySlots((done, total) => progress.push([done, total]))
-  if (mig.migrated !== 2) { console.error('FAIL migrate count: ' + JSON.stringify(mig)); process.exit(1) }
+  if (!mig.ok || mig.value.migrated !== 2) { console.error('FAIL migrate count: ' + JSON.stringify(mig)); process.exit(1) }
   if (progress[progress.length - 1]?.[0] !== 2 || progress[progress.length - 1]?.[1] !== 2) { console.error('FAIL migrate progress: ' + JSON.stringify(progress)); process.exit(1) }
   if (!fakeFiles.has('旧s-new-1.md') || !fakeFiles.has('旧s-new-2.md')) { console.error('FAIL migrate files not written'); process.exit(1) }
   const afterMig = registeredApi.saveIndex()
@@ -396,7 +395,7 @@ try {
   listCurrent = 's-root'
   const forkBeforeLegacyLoad = forkCalls.length
   const legLoad = await registeredApi.loadSaveFile('旧s-new-1')
-  if (legLoad.mode !== 'legacy') { console.error('FAIL legacy routing mode: ' + JSON.stringify(legLoad)); process.exit(1) }
+  if (!legLoad.ok || legLoad.value.mode !== 'legacy') { console.error('FAIL legacy routing mode: ' + JSON.stringify(legLoad)); process.exit(1) }
   const legacyFork = forkCalls[forkCalls.length - 1]
   if (legacyFork?.sessionId !== 's-new-1' || legacyFork.atSeq !== undefined) { console.error('FAIL legacy fork payload: ' + JSON.stringify(legacyFork)); process.exit(1) }
   if (forkCalls.length !== forkBeforeLegacyLoad + 1) { console.error('FAIL legacy load should fork exactly once'); process.exit(1) }
@@ -410,9 +409,9 @@ try {
   listCurrent = 's-root'
   listById['s-root'].title = '新名字探案'
   if (registeredApi.mainTitle() !== '新名字探案') { console.error('FAIL mainTitle own-title: ' + registeredApi.mainTitle()); process.exit(1) }
-  const renamedLoad = await registeredApi.loadSaveFile(renameSave.id)
+  const renamedLoad = await registeredApi.loadSaveFile(renameSave.value.id)
   const lastRename = renameCalls[renameCalls.length - 1]
-  if (renamedLoad.mode !== 'fork' || lastRename?.[1] !== '新名字探案') { console.error('FAIL load rename to new title: ' + JSON.stringify(lastRename)); process.exit(1) }
+  if (!renamedLoad.ok || renamedLoad.value.mode !== 'fork' || lastRename?.[1] !== '新名字探案') { console.error('FAIL load rename to new title: ' + JSON.stringify(lastRename)); process.exit(1) }
   console.log('rename fix ok')
 
   if (registeredApi.hasSessionsService() !== true) { console.error('FAIL hasSessionsService'); process.exit(1) }

@@ -3621,12 +3621,39 @@ function approvalSceneText(toolName, payload) {
   return "\u5C0F\u9CB8\u9C7C\u60F3\u7528\u300C" + name2 + "\u300D\u505A\u70B9\u4E8B\uFF0C\u4F60\u6279\u51C6\u5417\uFF1F";
 }
 
-// .dsh-plugin/client/PendingPanel.jsx
+// .dsh-plugin/client/errors.mjs
+function resultReason(result) {
+  if (result !== null && typeof result === "object" && result.ok === false && typeof result.reason === "string" && result.reason !== "") return result.reason;
+  return "\u64CD\u4F5C\u5931\u8D25";
+}
 function causeText(cause) {
-  if (cause === null || cause === void 0) return "\u54CD\u5E94\u5931\u8D25";
+  if (cause === null || cause === void 0) return "\u64CD\u4F5C\u5931\u8D25";
   if (typeof cause === "object" && typeof cause.message === "string") return cause.message;
   return String(cause);
 }
+function saveFailureText(reason) {
+  const r = String(reason ?? "");
+  if (r === "busy") return "\u5DF2\u6709\u5B58\u6863\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u5019\u518D\u8BD5";
+  if (r === "interfered") return "\u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u4E86\u53D8\u5316\uFF0C\u5DF2\u53D6\u6D88\u672C\u6B21\u5B58\u6863\uFF0C\u8BF7\u91CD\u8BD5";
+  if (r === "no-session") return "\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD";
+  if (r.indexOf("empty") === 0) {
+    const detail = r.length > 6 ? r.slice(6) : "";
+    return detail === "" ? "\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD\uFF0C\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427" : "\u5B58\u6863\u70B9\u7F3A\u5931\uFF0C\u65E0\u6CD5\u5B58\u6863\uFF08\u539F\u56E0\uFF1A" + detail + "\uFF09";
+  }
+  if (r.indexOf("capture-unavailable") === 0) {
+    const detail = r.length > 19 ? r.slice(20) : "";
+    return "\u5F53\u524D\u73AF\u5883\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55" + (detail === "" ? "\uFF0C\u8BF7\u91CD\u8BD5" : "\uFF08" + detail + "\uFF09");
+  }
+  return "\u5B58\u6863\u5931\u8D25\uFF1A" + (r === "" ? "\u672A\u77E5\u539F\u56E0" : r);
+}
+function dirErrorText(cause) {
+  if (cause !== null && typeof cause === "object" && cause.code === "dir-unauthorized") {
+    return "\u5B58\u6863\u6587\u4EF6\u5939\u672A\u6388\u6743\u6216\u4E0D\u53EF\u7528\uFF1A\u8BF7\u70B9\u51FB\u4E0A\u65B9\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D\u7528\u7CFB\u7EDF\u9009\u62E9\u6846\u91CD\u65B0\u9009\u62E9\u4E00\u6B21\uFF0C\u518D\u70B9\u5B58\u6863";
+  }
+  return null;
+}
+
+// .dsh-plugin/client/PendingPanel.jsx
 function assertAccepted(receipt) {
   if (receipt !== null && typeof receipt === "object" && receipt.accepted === false) {
     throw new Error("\u54CD\u5E94\u88AB\u62D2\u7EDD");
@@ -4324,10 +4351,10 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
           return { sessionId: id, turns: t !== null && t !== void 0 && t.error === null ? t.turns : null };
         }
       });
-      if (result.ok) setTestResult("\u6D4B\u8BD5\u6210\u529F:\u5DF2\u521B\u5EFA\u81EA\u52A8\u6863\u300C" + result.title + "\u300D(\u5DE5\u7A0B .gal-view-saves)");
+      if (result.ok) setTestResult("\u6D4B\u8BD5\u6210\u529F:\u5DF2\u521B\u5EFA\u81EA\u52A8\u6863\u300C" + result.value.title + "\u300D(\u5DE5\u7A0B .gal-view-saves)");
       else setTestResult("\u6D4B\u8BD5\u672A\u6210\u529F,\u539F\u56E0:" + String(result.reason ?? "\u672A\u77E5"));
     } catch (cause) {
-      setTestResult("\u6D4B\u8BD5\u5931\u8D25:" + causeText2(cause));
+      setTestResult("\u6D4B\u8BD5\u5931\u8D25:" + causeText(cause));
     }
     setTesting(false);
   };
@@ -4435,7 +4462,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
       }
       await refresh();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
     }
     setPicking(false);
   };
@@ -4451,14 +4478,16 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       setNotice("\u6B63\u5728\u5B58\u6863\uFF1A\u7B49\u5F85\u56DE\u5408\u843D\u5B9A\u3001\u5BFC\u51FA\u5B8C\u6574\u65E5\u5FD7\u2026\uFF08\u8BF7\u52FF\u7EE7\u7EED\u5BF9\u8BDD\uFF09");
       const result = await onRequestSave();
-      setNotice(result !== null && result.fallback === true ? "\u5DF2\u4E0B\u8F7D\u5B58\u6863\u6587\u4EF6\uFF08\u6B64\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5939\u5199\u5165\uFF0C\u8BF7\u628A\u6587\u4EF6\u653E\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF09" : "\u5DF2\u521B\u5EFA\u5B58\u6863\u300C" + result.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
+      const value = result !== null && typeof result === "object" ? result.value : null;
+      setNotice(value !== null && value.fallback === true ? "\u5DF2\u4E0B\u8F7D\u5B58\u6863\u6587\u4EF6\uFF08\u6B64\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u5939\u5199\u5165\uFF0C\u8BF7\u628A\u6587\u4EF6\u653E\u8FDB\u5DE5\u7A0B .gal-view-saves \u6587\u4EF6\u5939\uFF09" : "\u5DF2\u521B\u5EFA\u5B58\u6863\u300C" + value.title + "\u300D\uFF08\u6C38\u4E45\u4FDD\u5B58\uFF0C\u8BFB\u6863\u4E5F\u4E0D\u4F1A\u6539\u53D8\u5B83\uFF09");
       await refresh();
     } catch (cause) {
-      if (cause !== null && typeof cause === "object" && cause.code === "dir-unauthorized") {
-        setError("\u5B58\u6863\u6587\u4EF6\u5939\u672A\u6388\u6743\u6216\u4E0D\u53EF\u7528\uFF1A\u8BF7\u70B9\u51FB\u4E0A\u65B9\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D\u7528\u7CFB\u7EDF\u9009\u62E9\u6846\u91CD\u65B0\u9009\u62E9\u4E00\u6B21\uFF0C\u518D\u70B9\u5B58\u6863");
+      const dirText = dirErrorText(cause);
+      if (dirText !== null) {
+        setError(dirText);
         setNotice(null);
       } else {
-        setError(causeText2(cause));
+        setError(causeText(cause));
         setNotice(null);
       }
     }
@@ -4471,10 +4500,11 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       if (typeof api?.loadSaveFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u4EF6\u8BFB\u6863");
       const result = await api.loadSaveFile(id);
-      if (typeof onLoaded === "function") onLoaded(result);
+      if (result === null || typeof result !== "object" || result.ok !== true) throw new Error(resultReason(result));
+      if (typeof onLoaded === "function") onLoaded(result.value);
       onClose();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
       setBusy(false);
     }
   };
@@ -4486,11 +4516,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setNotice("\u6B63\u5728\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D\u2026");
     try {
       if (typeof api?.deleteSlotFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664\u5B58\u6863");
-      await api.deleteSlotFile(slot.id);
+      const result = await api.deleteSlotFile(slot.id);
+      if (result === null || typeof result !== "object" || result.ok !== true) throw new Error(resultReason(result));
       setNotice("\u5DF2\u5220\u9664\u5B58\u6863\u300C" + slot.title + "\u300D");
       await refresh();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
       setNotice(null);
     }
     setBusy(false);
@@ -4504,11 +4535,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setNotice("\u6B63\u5728\u5220\u9664 " + clean + "\u2026");
     try {
       if (typeof api?.deleteBrokenFile !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5220\u9664");
-      await api.deleteBrokenFile(name2);
+      const result = await api.deleteBrokenFile(name2);
+      if (result === null || typeof result !== "object" || result.ok !== true) throw new Error(resultReason(result));
       setNotice("\u5DF2\u5220\u9664 " + clean);
       await refresh();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
       setNotice(null);
     }
     setBusy(false);
@@ -4526,11 +4558,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     }
     try {
       if (typeof api?.renameSlot !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6539\u540D");
-      await api.renameSlot(slot.id, text);
+      const result = await api.renameSlot(slot.id, text);
+      if (result === null || typeof result !== "object" || result.ok !== true) throw new Error(resultReason(result));
       setEditingId(null);
       await refresh();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
     }
   };
   const loadLegacy = async (id) => {
@@ -4538,10 +4571,11 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setBusy(true);
     setError(null);
     try {
-      await api.loadSave(id);
+      const result = await api.loadSave(id);
+      if (result === null || typeof result !== "object" || result.ok !== true) throw new Error(resultReason(result));
       onClose();
     } catch (cause) {
-      setError(causeText2(cause));
+      setError(causeText(cause));
       setBusy(false);
     }
   };
@@ -4589,13 +4623,18 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       setMigrating({ done: 0, total: legacy.saves.length + legacy.autos.length });
       const result = await api.migrateLegacySlots((done, total) => setMigrating({ done, total }));
-      setNotice("\u5DF2\u5C06 " + result.migrated + " \u4E2A\u65E7\u5F0F\u5B58\u6863\u8FC1\u79FB\u4E3A\u65B0\u5F0F\uFF08\u540D\u79F0\u524D\u52A0\u300C\u65E7\u300D\uFF09");
+      if (result === null || typeof result !== "object" || result.ok !== true) {
+        const err = new Error(resultReason(result));
+        if (result !== null && typeof result === "object" && typeof result.code === "string") err.code = result.code;
+        throw err;
+      }
+      setNotice("\u5DF2\u5C06 " + result.value.migrated + " \u4E2A\u65E7\u5F0F\u5B58\u6863\u8FC1\u79FB\u4E3A\u65B0\u5F0F\uFF08\u540D\u79F0\u524D\u52A0\u300C\u65E7\u300D\uFF09");
       await refresh();
     } catch (cause) {
       if (cause !== null && typeof cause === "object" && cause.code === "dir-unauthorized") {
         setError("\u8FC1\u79FB\u9700\u8981\u5148\u6388\u6743\u5B58\u6863\u6587\u4EF6\u5939\uFF08\u70B9\u51FB\u4E0A\u65B9\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D\uFF09");
       } else {
-        setError(causeText2(cause));
+        setError(causeText(cause));
       }
       setNotice(null);
     }
@@ -4618,11 +4657,6 @@ function formatTime(ts) {
   const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, "0");
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
-}
-function causeText2(cause) {
-  if (cause === null || cause === void 0) return "\u64CD\u4F5C\u5931\u8D25";
-  if (typeof cause === "object" && typeof cause.message === "string") return cause.message;
-  return String(cause);
 }
 var GalErrorBoundary = class extends import_react4.default.Component {
   constructor(props) {
@@ -5028,19 +5062,9 @@ function GalView({ useSession, useInput, inputActions, useChat, useScene, useHis
       fallbackLines: readRecord()
     });
     if (!result.ok) {
-      const reason = String(result.reason ?? "");
-      if (reason === "busy") throw new Error("\u5DF2\u6709\u5B58\u6863\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u5019\u518D\u8BD5");
-      if (reason === "interfered") throw new Error("\u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u4E86\u53D8\u5316\uFF0C\u5DF2\u53D6\u6D88\u672C\u6B21\u5B58\u6863\uFF0C\u8BF7\u91CD\u8BD5");
-      if (reason.indexOf("empty") === 0) {
-        const detail = reason.length > 6 ? reason.slice(6) : "";
-        throw new Error(detail === "" ? "\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD\uFF0C\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427" : "\u5B58\u6863\u70B9\u7F3A\u5931\uFF0C\u65E0\u6CD5\u5B58\u6863\uFF08\u539F\u56E0\uFF1A" + detail + "\uFF09");
-      }
-      if (reason === "no-session") throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
-      if (reason.indexOf("capture-unavailable") === 0) {
-        const detail = reason.length > 19 ? reason.slice(20) : "";
-        throw new Error("\u5F53\u524D\u73AF\u5883\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55" + (detail === "" ? "\uFF0C\u8BF7\u91CD\u8BD5" : "\uFF08" + detail + "\uFF09"));
-      }
-      throw new Error("\u5B58\u6863\u5931\u8D25\uFF1A" + (reason === "" ? "\u672A\u77E5\u539F\u56E0" : reason));
+      const err = new Error(saveFailureText(result.reason));
+      if (typeof result.code === "string") err.code = result.code;
+      throw err;
     }
     return result;
   }, [api, pending, readRecord]);
@@ -6158,7 +6182,7 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
      * 写入顺序:先 zip(官方完整日志),再 md(可读记录+元数据);md 失败回滚 zip。
      * 自动档仅保留最新:新档全部成功后清理旧自动档的 md+zip。 */
     async saveSlotFile(payload) {
-      if (payload.atSeq === null || payload.atSeq === void 0) throw new Error("\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427");
+      if (payload.atSeq === null || payload.atSeq === void 0) return { ok: false, reason: "\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u5BF9\u8BDD,\u5148\u804A\u4E24\u53E5\u518D\u5B58\u6863\u5427", code: "empty" };
       const dir = payload.dir ?? await resolveSaveDir();
       const existing = dir !== null ? await listSaveFiles(dir) : [];
       const ids = existing.map(slotIdFromFileName).filter((id2) => id2 !== "");
@@ -6173,70 +6197,74 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
       const text = buildSaveDoc({ ...payload, title, note: note === "" ? void 0 : note });
       if (dir === null) {
         if (fsAccessSupported()) {
-          const error = new Error("\u9996\u6B21\u5B58\u6863\u9700\u8981\u6388\u6743\u6587\u4EF6\u5939(\u8BF7\u70B9\u51FB\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D)");
-          error.code = "dir-unauthorized";
-          throw error;
+          return { ok: false, reason: "\u9996\u6B21\u5B58\u6863\u9700\u8981\u6388\u6743\u6587\u4EF6\u5939(\u8BF7\u70B9\u51FB\u300C\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939\u300D)", code: "dir-unauthorized" };
         }
         let ok = true;
         if (hasZip) ok = downloadBlobFile(zipName, payload.zip, "application/zip") && ok;
         ok = downloadTextFile(name2, text) && ok;
-        if (!ok) throw new Error("\u4E0B\u8F7D\u5B58\u6863\u5931\u8D25(\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6587\u4EF6\u5199\u5165)");
-        return { id, name: name2, title, fallback: true };
-      }
-      if (hasZip) {
-        await writeSaveZip(dir, zipName, payload.zip);
-        console.info("[gal-view:save] \u65E5\u5FD7\u5907\u4EFD\u5199\u5165:", zipName);
+        if (!ok) return { ok: false, reason: "\u4E0B\u8F7D\u5B58\u6863\u5931\u8D25(\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6587\u4EF6\u5199\u5165)" };
+        return { ok: true, value: { id, name: name2, title, fallback: true } };
       }
       try {
-        await writeSaveFile(dir, name2, text);
-      } catch (cause) {
         if (hasZip) {
-          try {
-            await removeSaveFile(dir, zipName);
-          } catch {
+          await writeSaveZip(dir, zipName, payload.zip);
+          console.info("[gal-view:save] \u65E5\u5FD7\u5907\u4EFD\u5199\u5165:", zipName);
+        }
+        try {
+          await writeSaveFile(dir, name2, text);
+        } catch (cause) {
+          if (hasZip) {
+            try {
+              await removeSaveFile(dir, zipName);
+            } catch {
+            }
+          }
+          throw cause;
+        }
+        console.info("[gal-view:save] \u5B58\u6863\u6587\u4EF6\u5199\u5165:", name2, "(atSeq=" + payload.atSeq + ", \u5B8C\u6574\u65E5\u5FD7=" + String(hasZip) + ")");
+        if (payload.auto === true) {
+          for (const oldName of existing) {
+            const slot = slotFromFileName(oldName, prefix);
+            if (slot !== null && slot.auto && slot.id !== id) {
+              await removeSaveFile(dir, oldName);
+              await removeSaveFile(dir, slot.id + ".zip");
+              console.info("[gal-view:save] \u6E05\u7406\u65E7\u81EA\u52A8\u6863\u6587\u4EF6:", oldName);
+            }
           }
         }
-        throw cause;
+        this.noteSaveOp();
+        return { ok: true, value: { id, name: name2, title, fallback: false } };
+      } catch (cause) {
+        return { ok: false, reason: cause !== null && typeof cause.message === "string" ? cause.message : "\u5199\u5165\u5B58\u6863\u5931\u8D25", ...cause !== null && typeof cause === "object" && typeof cause.code === "string" ? { code: cause.code } : {} };
       }
-      console.info("[gal-view:save] \u5B58\u6863\u6587\u4EF6\u5199\u5165:", name2, "(atSeq=" + payload.atSeq + ", \u5B8C\u6574\u65E5\u5FD7=" + String(hasZip) + ")");
-      if (payload.auto === true) {
-        for (const oldName of existing) {
-          const slot = slotFromFileName(oldName, prefix);
-          if (slot !== null && slot.auto && slot.id !== id) {
-            await removeSaveFile(dir, oldName);
-            await removeSaveFile(dir, slot.id + ".zip");
-            console.info("[gal-view:save] \u6E05\u7406\u65E7\u81EA\u52A8\u6863\u6587\u4EF6:", oldName);
-          }
-        }
-      }
-      this.noteSaveOp();
-      return { id, name: name2, title, fallback: false };
     },
     /** 读文件存档:解析 → fork(当前主线, atSeq=存档点) → 打开新线。
      * 读档后是否归档旧线由设置项「读档后归档旧对话」控制(默认关,旧线保留可切回)。
-     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入。 */
+     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入(=成功)。 */
     async loadSaveFile(id) {
       const dir = await resolveSaveDir();
-      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      if (dir === null) return { ok: false, reason: "\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939", code: "dir-unauthorized" };
       const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
       const text = await readSaveFile(dir, name2);
-      if (text === null) throw new Error("\u5B58\u6863\u6587\u4EF6\u5DF2\u4E22\u5931(\u53EF\u80FD\u88AB\u79FB\u52A8\u6216\u5220\u9664)");
+      if (text === null) return { ok: false, reason: "\u5B58\u6863\u6587\u4EF6\u5DF2\u4E22\u5931(\u53EF\u80FD\u88AB\u79FB\u52A8\u6216\u5220\u9664)" };
       const doc = parseSaveDoc(text);
-      if (doc === null) throw new Error("\u5B58\u6863\u6587\u4EF6\u65E0\u6CD5\u89E3\u6790(\u683C\u5F0F\u635F\u574F\u6216\u4E0D\u662F\u672C\u63D2\u4EF6\u751F\u6210\u7684\u5B58\u6863)");
+      if (doc === null) return { ok: false, reason: "\u5B58\u6863\u6587\u4EF6\u65E0\u6CD5\u89E3\u6790(\u683C\u5F0F\u635F\u574F\u6216\u4E0D\u662F\u672C\u63D2\u4EF6\u751F\u6210\u7684\u5B58\u6863)" };
       if (doc.meta.legacySlotId !== null) {
         console.info("[gal-view:save] load-file: \u8FC1\u79FB\u6761\u76EE,\u8D70\u539F\u4F1A\u8BDD\u69FD\u8BFB\u6863:", doc.meta.legacySlotId);
         const legacyResult = await this.loadSave(doc.meta.legacySlotId);
+        if (!legacyResult.ok) return legacyResult;
         this.noteSaveOp();
         void this.checkConversationIntegrity();
-        return { childId: legacyResult.childId, mode: "legacy", lines: doc.lines, title: doc.meta.title };
+        return { ok: true, value: { childId: legacyResult.value.childId, mode: "legacy", lines: doc.lines, title: doc.meta.title } };
       }
       const mainId = this.currentSessionId();
-      if (mainId === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      if (mainId === null) return { ok: false, reason: "\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD", code: "no-session" };
       const mainTitle = this.mainTitle();
       console.info("[gal-view:save] load-file: \u89E3\u6790\u6210\u529F", doc.meta.title, "atSeq=" + String(doc.meta.atSeq), "sessionId=" + doc.meta.sessionId);
       const snapForChain = sessionsSvc?.list?.getSnapshot?.() ?? null;
       const byId = snapForChain !== null && typeof snapForChain === "object" ? snapForChain.byId ?? {} : {};
       const anchored = doc.meta.sessionId === mainId || isAncestorOf(byId, doc.meta.sessionId, mainId);
+      const failureReason = (cause) => cause !== null && typeof cause.message === "string" ? cause.message : "\u5206\u53C9\u8FD8\u539F\u5931\u8D25";
       try {
         if (!anchored) {
           console.warn("[gal-view:save] load-file: \u5B58\u6863\u4F1A\u8BDD\u4E0D\u5728\u5F53\u524D\u4E3B\u7EBF\u7956\u5148\u94FE\u4E0A,\u8DF3\u8FC7 fork-atSeq,\u964D\u7EA7\u4E3A\u5185\u5BB9\u7EA7\u8FD8\u539F:", doc.meta.sessionId, "\u2192", mainId);
@@ -6267,48 +6295,54 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         }
         this.noteSaveOp();
         void this.checkConversationIntegrity();
-        return { childId, mode: "fork", lines: doc.lines, title: doc.meta.title };
+        return { ok: true, value: { childId, mode: "fork", lines: doc.lines, title: doc.meta.title } };
       } catch (cause) {
         console.warn("[gal-view:save] load-file: fork \u8FD8\u539F\u5931\u8D25,\u964D\u7EA7\u4E3A\u5185\u5BB9\u7EA7\u8FD8\u539F:", cause);
-        if (!this.hasSessionsService() || typeof sessionsSvc.create !== "function") throw cause;
-        const created = await sessionsSvc.create({});
-        const createdId = typeof created === "string" ? created : created?.sessionId ?? created?.value?.sessionId;
-        if (typeof createdId !== "string" || createdId === "") throw cause;
-        await sessionsSvc.open(createdId);
-        const recordText = linesToText(doc.lines, doc.meta.assistantName);
-        this.noteSaveOp();
-        void this.checkConversationIntegrity();
-        return { childId: createdId, mode: "inject", lines: doc.lines, title: doc.meta.title, recordText };
+        if (!this.hasSessionsService() || typeof sessionsSvc.create !== "function") {
+          return { ok: false, reason: failureReason(cause) };
+        }
+        try {
+          const created = await sessionsSvc.create({});
+          const createdId = typeof created === "string" ? created : created?.sessionId ?? created?.value?.sessionId;
+          if (typeof createdId !== "string" || createdId === "") return { ok: false, reason: failureReason(cause) };
+          await sessionsSvc.open(createdId);
+          const recordText = linesToText(doc.lines, doc.meta.assistantName);
+          this.noteSaveOp();
+          void this.checkConversationIntegrity();
+          return { ok: true, value: { childId: createdId, mode: "inject", lines: doc.lines, title: doc.meta.title, recordText } };
+        } catch (cause2) {
+          return { ok: false, reason: failureReason(cause2) };
+        }
       }
     },
     /** 删除文件存档(直接删文件;不存在返回 false)。 */
     async deleteSlotFile(id) {
       const dir = await resolveSaveDir();
-      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      if (dir === null) return { ok: false, reason: "\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939", code: "dir-unauthorized" };
       const name2 = id.toLowerCase().endsWith(".md") ? id : id + ".md";
       const zipName = slotIdFromFileName(name2) + ".zip";
       const removed = await withTimeout(removeSaveFile(dir, name2), 5e3, false);
       await withTimeout(removeSaveFile(dir, zipName), 5e3, false);
       console.info("[gal-view:save] \u5220\u9664\u5B58\u6863\u6587\u4EF6:", name2, "->", String(removed));
-      return removed;
+      return { ok: true, value: removed };
     },
     /** 删除「无法识别」的杂项文件(面板列出的 broken 条目;兼容孤立 zip 后缀)。 */
     async deleteBrokenFile(name2) {
       const dir = await resolveSaveDir();
-      if (dir === null) throw new Error("\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939");
+      if (dir === null) return { ok: false, reason: "\u672A\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939", code: "dir-unauthorized" };
       const clean = String(name2).replace("(\u5B64\u7ACB\u65E5\u5FD7)", "");
-      if (clean === "") return false;
+      if (clean === "") return { ok: true, value: false };
       const removed = await withTimeout(removeSaveFile(dir, clean), 5e3, false);
       if (clean.toLowerCase().endsWith(".md")) {
         await withTimeout(removeSaveFile(dir, clean.replace(/\.md$/i, "") + ".zip"), 5e3, false);
       }
       console.info("[gal-view:save] \u5220\u9664\u65E0\u6CD5\u8BC6\u522B\u6587\u4EF6:", clean, "->", String(removed));
-      return removed;
+      return { ok: true, value: removed };
     },
     /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
-     * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
+     * 纯后台流式下载,不碰会话窗口;口径 B1:业务操作 → Result,不抛。 */
     async exportSessionLog(sessionId) {
-      if (typeof fetch !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u7F51\u7EDC\u8BF7\u6C42");
+      if (typeof fetch !== "function") return { ok: false, reason: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u7F51\u7EDC\u8BF7\u6C42" };
       const base = typeof window !== "undefined" && typeof window.location === "object" && window.location !== null && typeof window.location.origin === "string" && window.location.origin !== "" && window.location.origin !== "null" ? window.location.origin : "http://dsh.internal";
       const url = new URL("/api/session.export", base);
       url.searchParams.set("sessionId", String(sessionId));
@@ -6318,9 +6352,11 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
       }, 6e4);
       try {
         const response = await fetch(url.toString(), { method: "GET", signal: controller?.signal ?? void 0 });
-        if (!response.ok) throw new Error("HTTP " + response.status);
+        if (!response.ok) return { ok: false, reason: "HTTP " + response.status };
         const buffer = await response.arrayBuffer();
-        return new Uint8Array(buffer);
+        return { ok: true, value: new Uint8Array(buffer) };
+      } catch (cause) {
+        return { ok: false, reason: cause?.message ?? "\u5BFC\u51FA\u5931\u8D25" };
       } finally {
         clearTimeout(timer);
       }
@@ -6432,17 +6468,19 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
             return { ok: false, reason: "interfered" };
           }
           try {
-            zip = await this.exportSessionLog(sessionId);
+            const exportResult = await this.exportSessionLog(sessionId);
+            zip = exportResult.ok ? exportResult.value : null;
+            if (!exportResult.ok) console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", exportResult.reason);
           } catch (cause) {
             console.warn("[gal-view:save] \u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25:", cause);
-            exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
           }
+          if (zip === null) exportNote = (exportNote === "" ? "" : exportNote + ";") + "\u5B98\u65B9\u65E5\u5FD7\u5BFC\u51FA\u5931\u8D25,\u8BB0\u5F55\u4E3A\u6587\u672C\u8F6C\u5F55";
           if (typeof opts.guardCheck === "function" && !await checkGuard()) {
             console.warn("[gal-view:save] \u5B58\u6863\u671F\u95F4\u5BF9\u8BDD\u53D1\u751F\u53D8\u5316,\u4E2D\u6B62:", guardBefore);
             return { ok: false, reason: "interfered" };
           }
         }
-        const result = await this.saveSlotFile({
+        const slotResult = await this.saveSlotFile({
           auto: opts.auto === true,
           rootTitle,
           sessionId,
@@ -6457,8 +6495,9 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
           // 这里透传,避免 10 秒导出后脱离手势再解析被浏览器拒绝。
           dir: opts.dir ?? null
         });
+        if (!slotResult.ok) return slotResult;
         this.noteSaveOp();
-        return { ok: true, ...result };
+        return { ok: true, ...slotResult.value };
       } finally {
         this.unlockSave();
         void this.checkConversationIntegrity();
@@ -6469,63 +6508,64 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
     async migrateLegacySlots(onProgress) {
       const reg = this.readSlotsRegistry();
       const legacy = [...reg.saves, ...reg.autos];
-      if (legacy.length === 0) return { migrated: 0 };
+      if (legacy.length === 0) return { ok: true, value: { migrated: 0 } };
       const dir = await resolveSaveDir();
-      if (dir === null) {
-        const error = new Error("\u9996\u6B21\u4F7F\u7528\u9700\u8981\u6388\u6743\u5B58\u6863\u6587\u4EF6\u5939");
-        error.code = "dir-unauthorized";
-        throw error;
-      }
+      if (dir === null) return { ok: false, reason: "\u9996\u6B21\u4F7F\u7528\u9700\u8981\u6388\u6743\u5B58\u6863\u6587\u4EF6\u5939", code: "dir-unauthorized" };
       let done = 0;
-      for (const slot of legacy) {
-        const id = "\u65E7" + slot.id;
-        const name2 = id + ".md";
-        const zipName = id + ".zip";
-        const existingMd = await readSaveFile(dir, name2);
-        if (existingMd === null) {
-          const transcript = await this.captureTranscript(slot.id);
-          const lines = transcript.error === null ? transcript.lines : [];
-          const turns = transcript.error === null ? transcript.turns : 0;
-          let zip = null;
-          try {
-            zip = await this.exportSessionLog(slot.id);
-          } catch {
-          }
-          const text = buildSaveDoc({
-            title: "\u65E7" + slot.title,
-            savedAt: typeof slot.updatedAt === "number" ? slot.updatedAt : Date.now(),
-            rootTitle: reg.rootTitle,
-            sessionId: slot.id,
-            atSeq: null,
-            assistantName: "",
-            turns,
-            auto: false,
-            legacySlotId: slot.id,
-            lines,
-            note: "\u7531\u65E7\u5F0F\u4F1A\u8BDD\u69FD\u8FC1\u79FB;\u8BFB\u6863\u8D70\u539F\u4F1A\u8BDD\u69FD\u8DEF\u5F84;\u5B8C\u6574\u5185\u5BB9\u89C1\u540C\u540D zip"
-          });
-          if (zip !== null) await writeSaveZip(dir, zipName, zip);
-          try {
-            await writeSaveFile(dir, name2, text);
-          } catch (cause) {
-            if (zip !== null) {
-              try {
-                await removeSaveFile(dir, zipName);
-              } catch {
-              }
+      try {
+        for (const slot of legacy) {
+          const id = "\u65E7" + slot.id;
+          const name2 = id + ".md";
+          const zipName = id + ".zip";
+          const existingMd = await readSaveFile(dir, name2);
+          if (existingMd === null) {
+            const transcript = await this.captureTranscript(slot.id);
+            const lines = transcript.error === null ? transcript.lines : [];
+            const turns = transcript.error === null ? transcript.turns : 0;
+            let zip = null;
+            try {
+              const exportResult = await this.exportSessionLog(slot.id);
+              zip = exportResult.ok ? exportResult.value : null;
+            } catch {
             }
-            throw cause;
+            const text = buildSaveDoc({
+              title: "\u65E7" + slot.title,
+              savedAt: typeof slot.updatedAt === "number" ? slot.updatedAt : Date.now(),
+              rootTitle: reg.rootTitle,
+              sessionId: slot.id,
+              atSeq: null,
+              assistantName: "",
+              turns,
+              auto: false,
+              legacySlotId: slot.id,
+              lines,
+              note: "\u7531\u65E7\u5F0F\u4F1A\u8BDD\u69FD\u8FC1\u79FB;\u8BFB\u6863\u8D70\u539F\u4F1A\u8BDD\u69FD\u8DEF\u5F84;\u5B8C\u6574\u5185\u5BB9\u89C1\u540C\u540D zip"
+            });
+            if (zip !== null) await writeSaveZip(dir, zipName, zip);
+            try {
+              await writeSaveFile(dir, name2, text);
+            } catch (cause) {
+              if (zip !== null) {
+                try {
+                  await removeSaveFile(dir, zipName);
+                } catch {
+                }
+              }
+              throw cause;
+            }
+            console.info("[gal-view:save] \u65E7\u6863\u8FC1\u79FB:", name2);
           }
-          console.info("[gal-view:save] \u65E7\u6863\u8FC1\u79FB:", name2);
+          done += 1;
+          if (typeof onProgress === "function") onProgress(done, legacy.length);
         }
-        done += 1;
-        if (typeof onProgress === "function") onProgress(done, legacy.length);
+      } catch (cause) {
+        return { ok: false, reason: cause !== null && typeof cause.message === "string" ? cause.message : "\u8FC1\u79FB\u5931\u8D25", ...cause !== null && typeof cause === "object" && typeof cause.code === "string" ? { code: cause.code } : {} };
       }
       reg.saves = [];
       reg.autos = [];
       this.writeSlotsRegistry(reg);
       void this.checkConversationIntegrity();
-      return { migrated: done };
+      return { ok: true, value: { migrated: done } };
     },
     /** 当前工程路径(会话 cwd;缺失返回空串)。 */
     projectPath() {
@@ -7054,7 +7094,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
      * 打断官方会话窗口（对话整段消失）。 */
     async createSlot(title, auto) {
       const current2 = this.currentSessionId();
-      if (current2 === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      if (current2 === null) return { ok: false, reason: "\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD", code: "no-session" };
       console.info("[gal-view:save] createSlot \u5F00\u59CB:", title, "auto=" + String(auto === true));
       const snapshot = typeof sessionsSvc.list?.getSnapshot === "function" ? sessionsSvc.list.getSnapshot() : null;
       const rootTitle = this.rootTitleOf(current2, snapshot?.byId ?? {});
@@ -7077,15 +7117,15 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (rootTitle !== "") reg.rootTitle = rootTitle;
       this.writeSlotsRegistry(reg);
       this.noteSaveOp();
-      return { title, childId };
+      return { ok: true, value: { title, childId } };
     },
     /** 手动存档改名：仅中文/英文/数字/部分符号；更新名录 + 尝试同步会话标题（归档槽可能失败，忽略）。 */
     async renameSlot(slotId, newTitle) {
       const value = String(newTitle ?? "").trim();
-      if (!isValidSlotTitle(value)) throw new Error("\u540D\u79F0\u4EC5\u652F\u6301\u4E2D\u6587\u3001\u82F1\u6587\u3001\u6570\u5B57\u4E0E\u90E8\u5206\u7B26\u53F7\uFF08- _ \xB7 \u2026 \uFF01 \uFF1F ! ? \u3002 .\uFF09");
+      if (!isValidSlotTitle(value)) return { ok: false, reason: "\u540D\u79F0\u4EC5\u652F\u6301\u4E2D\u6587\u3001\u82F1\u6587\u3001\u6570\u5B57\u4E0E\u90E8\u5206\u7B26\u53F7\uFF08- _ \xB7 \u2026 \uFF01 \uFF1F ! ? \u3002 .\uFF09" };
       const reg = this.readSlotsRegistry();
       const target = reg.saves.find((s) => s.id === slotId);
-      if (target === void 0) throw new Error("\u5B58\u6863\u4E0D\u5B58\u5728");
+      if (target === void 0) return { ok: false, reason: "\u5B58\u6863\u4E0D\u5B58\u5728" };
       target.title = value;
       this.writeSlotsRegistry(reg);
       try {
@@ -7094,7 +7134,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         if (session !== null && typeof session.rename === "function") await session.rename(value);
       } catch {
       }
-      return { id: slotId, title: value };
+      return { ok: true, value: { id: slotId, title: value } };
     },
     /** 主线程标题：当前会话自身标题优先(用户改名立即生效,读档新线沿用新名),
      * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。
@@ -7125,28 +7165,30 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     /** SAVE（手动）：创建快照槽 xx-saveN；不切换。 */
     async saveSlot() {
-      if (!this.hasSessionsService()) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9");
+      if (!this.hasSessionsService()) return { ok: false, reason: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9" };
       const reg = this.readSlotsRegistry();
       const prefix = saveRootPrefix(this.mainTitle());
       const title = nextSaveTitle(prefix, reg.saves.map((s) => s.n));
-      return this.createSlot(title, false);
+      const result = await this.createSlot(title, false);
+      return result.ok ? { ok: true, value: result.value } : result;
     },
     /** 自动存档（主线程，特殊标识「自动」，永不覆盖）：创建快照槽 xx-自动N；不切换。 */
     async autoSave() {
-      if (!this.hasSessionsService()) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9");
+      if (!this.hasSessionsService()) return { ok: false, reason: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9" };
       const reg = this.readSlotsRegistry();
       const prefix = saveRootPrefix(this.mainTitle());
       const title = nextAutoTitle(prefix, reg.autos.map((s) => s.n));
-      return this.createSlot(title, true);
+      const result = await this.createSlot(title, true);
+      return result.ok ? { ok: true, value: result.value } : result;
     },
     /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。
      * 时序护栏：fork(槽) 不影响当前视图；open(子) 后轮询确认切换已落地
      * （list.current === childId）再归档旧线——官方在"当前会话被归档"时会
      * clear 当前选择，归档必须先确认切换完成。 */
     async loadSave(saveId) {
-      if (!this.hasSessionsService()) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9");
+      if (!this.hasSessionsService()) return { ok: false, reason: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u4F1A\u8BDD\u5206\u53C9" };
       const oldCurrent = this.currentSessionId();
-      if (oldCurrent === null) throw new Error("\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD");
+      if (oldCurrent === null) return { ok: false, reason: "\u672A\u627E\u5230\u5F53\u524D\u4F1A\u8BDD", code: "no-session" };
       const reg = this.readSlotsRegistry();
       const mainTitle = reg.rootTitle !== "" ? reg.rootTitle : this.rootTitleOf(oldCurrent, sessionsSvc?.list?.getSnapshot?.()?.byId ?? {});
       console.info("[gal-view:save] load: fork \u69FD", saveId);
@@ -7174,12 +7216,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       this.noteSaveOp();
       void this.checkConversationIntegrity();
-      return { childId };
+      return { ok: true, value: { childId } };
     },
     /** LOAD：切换到指定会话（读档）。 */
     async openSession(sessionId) {
-      if (typeof sessionsSvc?.open !== "function") throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5207\u6362\u4F1A\u8BDD");
+      if (typeof sessionsSvc?.open !== "function") return { ok: false, reason: "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5207\u6362\u4F1A\u8BDD" };
       await sessionsSvc.open(sessionId);
+      return { ok: true };
     },
     /** 会话列表订阅（存档面板自动刷新）；返回取消函数（服务缺失时返回 noop）。 */
     onSessions(cb) {

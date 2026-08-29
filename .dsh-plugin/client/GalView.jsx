@@ -14,6 +14,7 @@ import {
 import { hideShellChromeForGal } from './host-adapter.mjs'
 import { splitPages, createFitsMeasurer } from './paging.mjs'
 import { normalizePersona } from './persona.mjs'
+import { causeText, resultReason, dirErrorText, saveFailureText } from './errors.mjs'
 
 /** 玩家消息完整显示后的最短滞留时长（此后由模型状态触发翻页）。 */
 const STATUS_DWELL_MS = 1500
@@ -87,7 +88,7 @@ function SettingsPanel({ scene, api, onClose, autoSaveStatus }) {
           return { sessionId: id, turns: t !== null && t !== undefined && t.error === null ? t.turns : null }
         },
       })
-      if (result.ok) setTestResult('测试成功:已创建自动档「' + result.title + '」(工程 .gal-view-saves)')
+      if (result.ok) setTestResult('测试成功:已创建自动档「' + result.value.title + '」(工程 .gal-view-saves)')
       else setTestResult('测试未成功,原因:' + String(result.reason ?? '未知'))
     } catch (cause) {
       setTestResult('测试失败:' + causeText(cause))
@@ -233,14 +234,16 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       setNotice('正在存档：等待回合落定、导出完整日志…（请勿继续对话）')
       const result = await onRequestSave()
-      setNotice(result !== null && result.fallback === true
+      const value = result !== null && typeof result === 'object' ? result.value : null
+      setNotice(value !== null && value.fallback === true
         ? '已下载存档文件（此环境不支持文件夹写入，请把文件放进工程 .gal-view-saves 文件夹）'
-        : '已创建存档「' + result.title + '」（永久保存，读档也不会改变它）')
+        : '已创建存档「' + value.title + '」（永久保存，读档也不会改变它）')
       await refresh()
     } catch (cause) {
       // 极端兜底:目录在存档中途变得不可用(理论上 requestSave 已在手势内解决)。
-      if (cause !== null && typeof cause === 'object' && cause.code === 'dir-unauthorized') {
-        setError('存档文件夹未授权或不可用：请点击上方「选择存档文件夹」用系统选择框重新选择一次，再点存档')
+      const dirText = dirErrorText(cause)
+      if (dirText !== null) {
+        setError(dirText)
         setNotice(null)
       } else {
         setError(causeText(cause))
@@ -256,7 +259,8 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       if (typeof api?.loadSaveFile !== 'function') throw new Error('当前环境不支持文件读档')
       const result = await api.loadSaveFile(id)
-      if (typeof onLoaded === 'function') onLoaded(result)
+      if (result === null || typeof result !== 'object' || result.ok !== true) throw new Error(resultReason(result))
+      if (typeof onLoaded === 'function') onLoaded(result.value)
       onClose()
     } catch (cause) {
       setError(causeText(cause))
@@ -271,7 +275,8 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setNotice('正在删除存档「' + slot.title + '」…')
     try {
       if (typeof api?.deleteSlotFile !== 'function') throw new Error('当前环境不支持删除存档')
-      await api.deleteSlotFile(slot.id)
+      const result = await api.deleteSlotFile(slot.id)
+      if (result === null || typeof result !== 'object' || result.ok !== true) throw new Error(resultReason(result))
       setNotice('已删除存档「' + slot.title + '」')
       await refresh()
     } catch (cause) {
@@ -289,7 +294,8 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setNotice('正在删除 ' + clean + '…')
     try {
       if (typeof api?.deleteBrokenFile !== 'function') throw new Error('当前环境不支持删除')
-      await api.deleteBrokenFile(name)
+      const result = await api.deleteBrokenFile(name)
+      if (result === null || typeof result !== 'object' || result.ok !== true) throw new Error(resultReason(result))
       setNotice('已删除 ' + clean)
       await refresh()
     } catch (cause) {
@@ -312,7 +318,8 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     }
     try {
       if (typeof api?.renameSlot !== 'function') throw new Error('当前环境不支持改名')
-      await api.renameSlot(slot.id, text)
+      const result = await api.renameSlot(slot.id, text)
+      if (result === null || typeof result !== 'object' || result.ok !== true) throw new Error(resultReason(result))
       setEditingId(null)
       await refresh()
     } catch (cause) {
@@ -324,7 +331,8 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setBusy(true)
     setError(null)
     try {
-      await api.loadSave(id)
+      const result = await api.loadSave(id)
+      if (result === null || typeof result !== 'object' || result.ok !== true) throw new Error(resultReason(result))
       onClose()
     } catch (cause) {
       setError(causeText(cause))
@@ -384,7 +392,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     try {
       setMigrating({ done: 0, total: legacy.saves.length + legacy.autos.length })
       const result = await api.migrateLegacySlots((done, total) => setMigrating({ done, total }))
-      setNotice('已将 ' + result.migrated + ' 个旧式存档迁移为新式（名称前加「旧」）')
+      if (result === null || typeof result !== 'object' || result.ok !== true) {
+        const err = new Error(resultReason(result))
+        if (result !== null && typeof result === 'object' && typeof result.code === 'string') err.code = result.code
+        throw err
+      }
+      setNotice('已将 ' + result.value.migrated + ' 个旧式存档迁移为新式（名称前加「旧」）')
       await refresh()
     } catch (cause) {
       if (cause !== null && typeof cause === 'object' && cause.code === 'dir-unauthorized') {
@@ -484,13 +497,6 @@ function formatTime(ts) {
   const d = new Date(ts)
   const pad = n => String(n).padStart(2, '0')
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
-}
-
-/** 响应失败的可读信息。 */
-function causeText(cause) {
-  if (cause === null || cause === undefined) return '操作失败'
-  if (typeof cause === 'object' && typeof cause.message === 'string') return cause.message
-  return String(cause)
 }
 
 /** GAL 视窗错误边界:渲染异常时显示可读错误(便于定位),而不是整个视窗空白。 */
@@ -1054,21 +1060,10 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
       fallbackLines: readRecord(),
     })
     if (!result.ok) {
-      const reason = String(result.reason ?? '')
-      if (reason === 'busy') throw new Error('已有存档正在进行，请稍候再试')
-      if (reason === 'interfered') throw new Error('存档期间对话发生了变化，已取消本次存档，请重试')
-      if (reason.indexOf('empty') === 0) {
-        const detail = reason.length > 6 ? reason.slice(6) : ''
-        throw new Error(detail === ''
-          ? '还没有已完成的对话，先聊两句再存档吧'
-          : '存档点缺失，无法存档（原因：' + detail + '）')
-      }
-      if (reason === 'no-session') throw new Error('未找到当前会话')
-      if (reason.indexOf('capture-unavailable') === 0) {
-        const detail = reason.length > 19 ? reason.slice(20) : ''
-        throw new Error('当前环境无法读取会话记录' + (detail === '' ? '，请重试' : '（' + detail + '）'))
-      }
-      throw new Error('存档失败：' + (reason === '' ? '未知原因' : reason))
+      // 口径 B2:reason 翻译收编进 saveFailureText;机器码透传给面板兜底分支(dir-unauthorized)。
+      const err = new Error(saveFailureText(result.reason))
+      if (typeof result.code === 'string') err.code = result.code
+      throw err
     }
     return result
   }, [api, pending, readRecord])

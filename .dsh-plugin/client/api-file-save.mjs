@@ -117,7 +117,7 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
      * 写入顺序:先 zip(官方完整日志),再 md(可读记录+元数据);md 失败回滚 zip。
      * 自动档仅保留最新:新档全部成功后清理旧自动档的 md+zip。 */
     async saveSlotFile(payload) {
-      if (payload.atSeq === null || payload.atSeq === undefined) throw new Error('还没有已完成的对话,先聊两句再存档吧')
+      if (payload.atSeq === null || payload.atSeq === undefined) return { ok: false, reason: '还没有已完成的对话,先聊两句再存档吧', code: 'empty' }
       const dir = payload.dir ?? await resolveSaveDir()
       const existing = dir !== null ? await listSaveFiles(dir) : []
       const ids = existing.map(slotIdFromFileName).filter(id => id !== '')
@@ -133,66 +133,70 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
       if (dir === null) {
         if (fsAccessSupported()) {
           // 支持但未授权:首次存档需要用户授权一次(面板引导)。
-          const error = new Error('首次存档需要授权文件夹(请点击「选择存档文件夹」)')
-          error.code = 'dir-unauthorized'
-          throw error
+          return { ok: false, reason: '首次存档需要授权文件夹(请点击「选择存档文件夹」)', code: 'dir-unauthorized' }
         }
         // 环境不支持:降级浏览器下载(Downloads)。
         let ok = true
         if (hasZip) ok = downloadBlobFile(zipName, payload.zip, 'application/zip') && ok
         ok = downloadTextFile(name, text) && ok
-        if (!ok) throw new Error('下载存档失败(浏览器不支持文件写入)')
-        return { id, name, title, fallback: true }
+        if (!ok) return { ok: false, reason: '下载存档失败(浏览器不支持文件写入)' }
+        return { ok: true, value: { id, name, title, fallback: true } }
       }
-      // ① 官方完整日志 zip(先写)
-      if (hasZip) {
-        await writeSaveZip(dir, zipName, payload.zip)
-        console.info('[gal-view:save] 日志备份写入:', zipName)
-      }
-      // ② 可读记录 md;失败回滚 zip
       try {
-        await writeSaveFile(dir, name, text)
-      } catch (cause) {
-        if (hasZip) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
-        throw cause
-      }
-      console.info('[gal-view:save] 存档文件写入:', name, '(atSeq=' + payload.atSeq + ', 完整日志=' + String(hasZip) + ')')
-      // ③ 自动档清理(新档成功后)
-      if (payload.auto === true) {
-        for (const oldName of existing) {
-          const slot = slotFromFileName(oldName, prefix)
-          if (slot !== null && slot.auto && slot.id !== id) {
-            await removeSaveFile(dir, oldName)
-            await removeSaveFile(dir, slot.id + '.zip')
-            console.info('[gal-view:save] 清理旧自动档文件:', oldName)
+        // ① 官方完整日志 zip(先写)
+        if (hasZip) {
+          await writeSaveZip(dir, zipName, payload.zip)
+          console.info('[gal-view:save] 日志备份写入:', zipName)
+        }
+        // ② 可读记录 md;失败回滚 zip
+        try {
+          await writeSaveFile(dir, name, text)
+        } catch (cause) {
+          if (hasZip) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
+          throw cause
+        }
+        console.info('[gal-view:save] 存档文件写入:', name, '(atSeq=' + payload.atSeq + ', 完整日志=' + String(hasZip) + ')')
+        // ③ 自动档清理(新档成功后)
+        if (payload.auto === true) {
+          for (const oldName of existing) {
+            const slot = slotFromFileName(oldName, prefix)
+            if (slot !== null && slot.auto && slot.id !== id) {
+              await removeSaveFile(dir, oldName)
+              await removeSaveFile(dir, slot.id + '.zip')
+              console.info('[gal-view:save] 清理旧自动档文件:', oldName)
+            }
           }
         }
+        this.noteSaveOp()
+        return { ok: true, value: { id, name, title, fallback: false } }
+      } catch (cause) {
+        // 口径 B1:内部 IO 异常在业务边界转 Result(异常不出边界)。
+        return { ok: false, reason: cause !== null && typeof cause.message === 'string' ? cause.message : '写入存档失败', ...(cause !== null && typeof cause === 'object' && typeof cause.code === 'string' ? { code: cause.code } : {}) }
       }
-      this.noteSaveOp()
-      return { id, name, title, fallback: false }
     },
     /** 读文件存档:解析 → fork(当前主线, atSeq=存档点) → 打开新线。
      * 读档后是否归档旧线由设置项「读档后归档旧对话」控制(默认关,旧线保留可切回)。
-     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入。 */
+     * fork 不可用(主线不含该锚点/跨工程)时降级:新建会话 + 记录文本注入(=成功)。 */
     async loadSaveFile(id) {
       const dir = await resolveSaveDir()
-      if (dir === null) throw new Error('未选择存档文件夹')
+      if (dir === null) return { ok: false, reason: '未选择存档文件夹', code: 'dir-unauthorized' }
       const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
       const text = await readSaveFile(dir, name)
-      if (text === null) throw new Error('存档文件已丢失(可能被移动或删除)')
+      if (text === null) return { ok: false, reason: '存档文件已丢失(可能被移动或删除)' }
       const doc = parseSaveDoc(text)
-      if (doc === null) throw new Error('存档文件无法解析(格式损坏或不是本插件生成的存档)')
+      if (doc === null) return { ok: false, reason: '存档文件无法解析(格式损坏或不是本插件生成的存档)' }
       // 迁移条目(旧式槽转来):读档走原会话槽 fork 路径——槽是独立分支,
       // fork-atSeq 无法精确锚定,绝不混用。
       if (doc.meta.legacySlotId !== null) {
         console.info('[gal-view:save] load-file: 迁移条目,走原会话槽读档:', doc.meta.legacySlotId)
         const legacyResult = await this.loadSave(doc.meta.legacySlotId)
+        if (!legacyResult.ok) return legacyResult
         this.noteSaveOp()
         void this.checkConversationIntegrity()
-        return { childId: legacyResult.childId, mode: 'legacy', lines: doc.lines, title: doc.meta.title }
+        return { ok: true, value: { childId: legacyResult.value.childId, mode: 'legacy', lines: doc.lines, title: doc.meta.title } }
       }
       const mainId = this.currentSessionId()
-      if (mainId === null) throw new Error('未找到当前会话')
+      if (mainId === null) return { ok: false, reason: '未找到当前会话', code: 'no-session' }
       const mainTitle = this.mainTitle()
       console.info('[gal-view:save] load-file: 解析成功', doc.meta.title, 'atSeq=' + String(doc.meta.atSeq), 'sessionId=' + doc.meta.sessionId)
       // 世界线校验:存档会话必须在当前主线的祖先链上(或就是主线),fork-atSeq
@@ -200,6 +204,7 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
       const snapForChain = sessionsSvc?.list?.getSnapshot?.() ?? null
       const byId = snapForChain !== null && typeof snapForChain === 'object' ? snapForChain.byId ?? {} : {}
       const anchored = doc.meta.sessionId === mainId || isAncestorOf(byId, doc.meta.sessionId, mainId)
+      const failureReason = (cause) => (cause !== null && typeof cause.message === 'string' ? cause.message : '分叉还原失败')
       try {
         // 世界线校验:存档会话必须在当前主线的祖先链上(或就是主线),fork-atSeq
         // 才能精确切回存档点;否则官方会静默切到"最后一个完成回合",内容漂移,
@@ -234,48 +239,54 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
         }
         this.noteSaveOp()
         void this.checkConversationIntegrity()
-        return { childId, mode: 'fork', lines: doc.lines, title: doc.meta.title }
+        return { ok: true, value: { childId, mode: 'fork', lines: doc.lines, title: doc.meta.title } }
       } catch (cause) {
         console.warn('[gal-view:save] load-file: fork 还原失败,降级为内容级还原:', cause)
-        if (!this.hasSessionsService() || typeof sessionsSvc.create !== 'function') throw cause
-        const created = await sessionsSvc.create({})
-        const createdId = typeof created === 'string' ? created : created?.sessionId ?? created?.value?.sessionId
-        if (typeof createdId !== 'string' || createdId === '') throw cause
-        await sessionsSvc.open(createdId)
-        const recordText = linesToText(doc.lines, doc.meta.assistantName)
-        this.noteSaveOp()
-        void this.checkConversationIntegrity()
-        return { childId: createdId, mode: 'inject', lines: doc.lines, title: doc.meta.title, recordText }
+        if (!this.hasSessionsService() || typeof sessionsSvc.create !== 'function') {
+          return { ok: false, reason: failureReason(cause) }
+        }
+        try {
+          const created = await sessionsSvc.create({})
+          const createdId = typeof created === 'string' ? created : created?.sessionId ?? created?.value?.sessionId
+          if (typeof createdId !== 'string' || createdId === '') return { ok: false, reason: failureReason(cause) }
+          await sessionsSvc.open(createdId)
+          const recordText = linesToText(doc.lines, doc.meta.assistantName)
+          this.noteSaveOp()
+          void this.checkConversationIntegrity()
+          return { ok: true, value: { childId: createdId, mode: 'inject', lines: doc.lines, title: doc.meta.title, recordText } }
+        } catch (cause2) {
+          return { ok: false, reason: failureReason(cause2) }
+        }
       }
     },
     /** 删除文件存档(直接删文件;不存在返回 false)。 */
     async deleteSlotFile(id) {
       const dir = await resolveSaveDir()
-      if (dir === null) throw new Error('未选择存档文件夹')
+      if (dir === null) return { ok: false, reason: '未选择存档文件夹', code: 'dir-unauthorized' }
       const name = id.toLowerCase().endsWith('.md') ? id : id + '.md'
       const zipName = slotIdFromFileName(name) + '.zip'
       const removed = await withTimeout(removeSaveFile(dir, name), 5000, false)
       await withTimeout(removeSaveFile(dir, zipName), 5000, false)
       console.info('[gal-view:save] 删除存档文件:', name, '->', String(removed))
-      return removed
+      return { ok: true, value: removed }
     },
     /** 删除「无法识别」的杂项文件(面板列出的 broken 条目;兼容孤立 zip 后缀)。 */
     async deleteBrokenFile(name) {
       const dir = await resolveSaveDir()
-      if (dir === null) throw new Error('未选择存档文件夹')
+      if (dir === null) return { ok: false, reason: '未选择存档文件夹', code: 'dir-unauthorized' }
       const clean = String(name).replace('(孤立日志)', '')
-      if (clean === '') return false
+      if (clean === '') return { ok: true, value: false }
       const removed = await withTimeout(removeSaveFile(dir, clean), 5000, false)
       if (clean.toLowerCase().endsWith('.md')) {
         await withTimeout(removeSaveFile(dir, clean.replace(/\.md$/i, '') + '.zip'), 5000, false)
       }
       console.info('[gal-view:save] 删除无法识别文件:', clean, '->', String(removed))
-      return removed
+      return { ok: true, value: removed }
     },
     /** 官方会话日志导出:GET /api/session.export → 完整日志 zip(Uint8Array)。
-     * 纯后台流式下载,不碰会话窗口;失败抛错(调用方决定兜底)。 */
+     * 纯后台流式下载,不碰会话窗口;口径 B1:业务操作 → Result,不抛。 */
     async exportSessionLog(sessionId) {
-      if (typeof fetch !== 'function') throw new Error('当前环境不支持网络请求')
+      if (typeof fetch !== 'function') return { ok: false, reason: '当前环境不支持网络请求' }
       const base = (typeof window !== 'undefined' && typeof window.location === 'object' && window.location !== null
         && typeof window.location.origin === 'string' && window.location.origin !== '' && window.location.origin !== 'null')
         ? window.location.origin
@@ -286,9 +297,11 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
       const timer = setTimeout(() => { controller?.abort() }, 60000)
       try {
         const response = await fetch(url.toString(), { method: 'GET', signal: controller?.signal ?? undefined })
-        if (!response.ok) throw new Error('HTTP ' + response.status)
+        if (!response.ok) return { ok: false, reason: 'HTTP ' + response.status }
         const buffer = await response.arrayBuffer()
-        return new Uint8Array(buffer)
+        return { ok: true, value: new Uint8Array(buffer) }
+      } catch (cause) {
+        return { ok: false, reason: cause?.message ?? '导出失败' }
       } finally {
         clearTimeout(timer)
       }
@@ -410,17 +423,20 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
             return { ok: false, reason: 'interfered' }
           }
           try {
-            zip = await this.exportSessionLog(sessionId)
+            const exportResult = await this.exportSessionLog(sessionId)
+            zip = exportResult.ok ? exportResult.value : null
+            if (!exportResult.ok) console.warn('[gal-view:save] 官方日志导出失败:', exportResult.reason)
           } catch (cause) {
+            // 防御:导出实现自身的意外异常也不打断存档(与 B1 双保险)。
             console.warn('[gal-view:save] 官方日志导出失败:', cause)
-            exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
           }
+          if (zip === null) exportNote = (exportNote === '' ? '' : exportNote + ';') + '官方日志导出失败,记录为文本转录'
           if (typeof opts.guardCheck === 'function' && !(await checkGuard())) {
             console.warn('[gal-view:save] 存档期间对话发生变化,中止:', guardBefore)
             return { ok: false, reason: 'interfered' }
           }
         }
-        const result = await this.saveSlotFile({
+        const slotResult = await this.saveSlotFile({
           auto: opts.auto === true,
           rootTitle,
           sessionId,
@@ -435,8 +451,9 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
           // 这里透传,避免 10 秒导出后脱离手势再解析被浏览器拒绝。
           dir: opts.dir ?? null,
         })
+        if (!slotResult.ok) return slotResult
         this.noteSaveOp()
-        return { ok: true, ...result }
+        return { ok: true, ...slotResult.value }
       } finally {
         this.unlockSave()
         // 操作后检查对话窗口完整性(被官方重装截断时自动恢复)。
@@ -448,55 +465,61 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
     async migrateLegacySlots(onProgress) {
       const reg = this.readSlotsRegistry()
       const legacy = [...reg.saves, ...reg.autos]
-      if (legacy.length === 0) return { migrated: 0 }
+      if (legacy.length === 0) return { ok: true, value: { migrated: 0 } }
       const dir = await resolveSaveDir()
-      if (dir === null) {
-        const error = new Error('首次使用需要授权存档文件夹')
-        error.code = 'dir-unauthorized'
-        throw error
-      }
+      if (dir === null) return { ok: false, reason: '首次使用需要授权存档文件夹', code: 'dir-unauthorized' }
       let done = 0
-      for (const slot of legacy) {
-        const id = '旧' + slot.id
-        const name = id + '.md'
-        const zipName = id + '.zip'
-        const existingMd = await readSaveFile(dir, name)
-        if (existingMd === null) {
-          const transcript = await this.captureTranscript(slot.id)
-          const lines = transcript.error === null ? transcript.lines : []
-          const turns = transcript.error === null ? transcript.turns : 0
-          let zip = null
-          try { zip = await this.exportSessionLog(slot.id) } catch { /* 归档槽导出失败可接受 */ }
-          const text = buildSaveDoc({
-            title: '旧' + slot.title,
-            savedAt: typeof slot.updatedAt === 'number' ? slot.updatedAt : Date.now(),
-            rootTitle: reg.rootTitle,
-            sessionId: slot.id,
-            atSeq: null,
-            assistantName: '',
-            turns,
-            auto: false,
-            legacySlotId: slot.id,
-            lines,
-            note: '由旧式会话槽迁移;读档走原会话槽路径;完整内容见同名 zip',
-          })
-          if (zip !== null) await writeSaveZip(dir, zipName, zip)
-          try {
-            await writeSaveFile(dir, name, text)
-          } catch (cause) {
-            if (zip !== null) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
-            throw cause
+      try {
+        for (const slot of legacy) {
+          const id = '旧' + slot.id
+          const name = id + '.md'
+          const zipName = id + '.zip'
+          const existingMd = await readSaveFile(dir, name)
+          if (existingMd === null) {
+            const transcript = await this.captureTranscript(slot.id)
+            const lines = transcript.error === null ? transcript.lines : []
+            const turns = transcript.error === null ? transcript.turns : 0
+            let zip = null
+            try {
+              const exportResult = await this.exportSessionLog(slot.id)
+              zip = exportResult.ok ? exportResult.value : null
+            } catch {
+              // 归档槽导出失败可接受
+            }
+            const text = buildSaveDoc({
+              title: '旧' + slot.title,
+              savedAt: typeof slot.updatedAt === 'number' ? slot.updatedAt : Date.now(),
+              rootTitle: reg.rootTitle,
+              sessionId: slot.id,
+              atSeq: null,
+              assistantName: '',
+              turns,
+              auto: false,
+              legacySlotId: slot.id,
+              lines,
+              note: '由旧式会话槽迁移;读档走原会话槽路径;完整内容见同名 zip',
+            })
+            if (zip !== null) await writeSaveZip(dir, zipName, zip)
+            try {
+              await writeSaveFile(dir, name, text)
+            } catch (cause) {
+              if (zip !== null) { try { await removeSaveFile(dir, zipName) } catch { /* 忽略 */ } }
+              throw cause
+            }
+            console.info('[gal-view:save] 旧档迁移:', name)
           }
-          console.info('[gal-view:save] 旧档迁移:', name)
+          done += 1
+          if (typeof onProgress === 'function') onProgress(done, legacy.length)
         }
-        done += 1
-        if (typeof onProgress === 'function') onProgress(done, legacy.length)
+      } catch (cause) {
+        // 口径 B1:内部 IO 异常在业务边界转 Result(失败时不清旧槽名录)。
+        return { ok: false, reason: cause !== null && typeof cause.message === 'string' ? cause.message : '迁移失败', ...(cause !== null && typeof cause === 'object' && typeof cause.code === 'string' ? { code: cause.code } : {}) }
       }
       reg.saves = []
       reg.autos = []
       this.writeSlotsRegistry(reg)
       void this.checkConversationIntegrity()
-      return { migrated: done }
+      return { ok: true, value: { migrated: done } }
     },
     /** 当前工程路径(会话 cwd;缺失返回空串)。 */
     projectPath() {

@@ -269,7 +269,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
      * 打断官方会话窗口（对话整段消失）。 */
     async createSlot(title, auto) {
       const current = this.currentSessionId()
-      if (current === null) throw new Error('未找到当前会话')
+      if (current === null) return { ok: false, reason: '未找到当前会话', code: 'no-session' }
       console.info('[gal-view:save] createSlot 开始:', title, 'auto=' + String(auto === true))
       const snapshot = typeof sessionsSvc.list?.getSnapshot === 'function' ? sessionsSvc.list.getSnapshot() : null
       const rootTitle = this.rootTitleOf(current, snapshot?.byId ?? {})
@@ -295,15 +295,15 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       if (rootTitle !== '') reg.rootTitle = rootTitle
       this.writeSlotsRegistry(reg)
       this.noteSaveOp()
-      return { title, childId }
+      return { ok: true, value: { title, childId } }
     },
     /** 手动存档改名：仅中文/英文/数字/部分符号；更新名录 + 尝试同步会话标题（归档槽可能失败，忽略）。 */
     async renameSlot(slotId, newTitle) {
       const value = String(newTitle ?? '').trim()
-      if (!isValidSlotTitle(value)) throw new Error('名称仅支持中文、英文、数字与部分符号（- _ · … ！ ？ ! ? 。 .）')
+      if (!isValidSlotTitle(value)) return { ok: false, reason: '名称仅支持中文、英文、数字与部分符号（- _ · … ！ ？ ! ? 。 .）' }
       const reg = this.readSlotsRegistry()
       const target = reg.saves.find(s => s.id === slotId)
-      if (target === undefined) throw new Error('存档不存在')
+      if (target === undefined) return { ok: false, reason: '存档不存在' }
       target.title = value
       this.writeSlotsRegistry(reg)
       try {
@@ -313,7 +313,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       } catch {
         // 忽略：归档槽无法改名时以名录为准
       }
-      return { id: slotId, title: value }
+      return { ok: true, value: { id: slotId, title: value } }
     },
     /** 主线程标题：当前会话自身标题优先(用户改名立即生效,读档新线沿用新名),
      * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。
@@ -346,28 +346,30 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     /** SAVE（手动）：创建快照槽 xx-saveN；不切换。 */
     async saveSlot() {
-      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      if (!this.hasSessionsService()) return { ok: false, reason: '当前环境不支持会话分叉' }
       const reg = this.readSlotsRegistry()
       const prefix = saveRootPrefix(this.mainTitle())
       const title = nextSaveTitle(prefix, reg.saves.map(s => s.n))
-      return this.createSlot(title, false)
+      const result = await this.createSlot(title, false)
+      return result.ok ? { ok: true, value: result.value } : result
     },
     /** 自动存档（主线程，特殊标识「自动」，永不覆盖）：创建快照槽 xx-自动N；不切换。 */
     async autoSave() {
-      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      if (!this.hasSessionsService()) return { ok: false, reason: '当前环境不支持会话分叉' }
       const reg = this.readSlotsRegistry()
       const prefix = saveRootPrefix(this.mainTitle())
       const title = nextAutoTitle(prefix, reg.autos.map(s => s.n))
-      return this.createSlot(title, true)
+      const result = await this.createSlot(title, true)
+      return result.ok ? { ok: true, value: result.value } : result
     },
     /** LOAD（读档）：从槽派生新世界线 → 切换 → 新线改回主线程原名 → 归档旧世界线。
      * 时序护栏：fork(槽) 不影响当前视图；open(子) 后轮询确认切换已落地
      * （list.current === childId）再归档旧线——官方在"当前会话被归档"时会
      * clear 当前选择，归档必须先确认切换完成。 */
     async loadSave(saveId) {
-      if (!this.hasSessionsService()) throw new Error('当前环境不支持会话分叉')
+      if (!this.hasSessionsService()) return { ok: false, reason: '当前环境不支持会话分叉' }
       const oldCurrent = this.currentSessionId()
-      if (oldCurrent === null) throw new Error('未找到当前会话')
+      if (oldCurrent === null) return { ok: false, reason: '未找到当前会话', code: 'no-session' }
       const reg = this.readSlotsRegistry()
       const mainTitle = reg.rootTitle !== '' ? reg.rootTitle : this.rootTitleOf(oldCurrent, sessionsSvc?.list?.getSnapshot?.()?.byId ?? {})
       console.info('[gal-view:save] load: fork 槽', saveId)
@@ -400,12 +402,13 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       this.noteSaveOp()
       void this.checkConversationIntegrity()
-      return { childId }
+      return { ok: true, value: { childId } }
     },
     /** LOAD：切换到指定会话（读档）。 */
     async openSession(sessionId) {
-      if (typeof sessionsSvc?.open !== 'function') throw new Error('当前环境不支持切换会话')
+      if (typeof sessionsSvc?.open !== 'function') return { ok: false, reason: '当前环境不支持切换会话' }
       await sessionsSvc.open(sessionId)
+      return { ok: true }
     },
     /** 会话列表订阅（存档面板自动刷新）；返回取消函数（服务缺失时返回 noop）。 */
     onSessions(cb) {

@@ -14,13 +14,7 @@ import {
   toggleSelected, approvalSceneText,
   respondApproval, respondQuestion, cancelQuestion, questionsOf, toolNameOf, reasonOf,
 } from './pending.mjs'
-
-/** 响应失败的可读信息。 */
-function causeText(cause) {
-  if (cause === null || cause === undefined) return '响应失败'
-  if (typeof cause === 'object' && typeof cause.message === 'string') return cause.message
-  return String(cause)
-}
+import { causeText } from './errors.mjs'
 
 /** 载体 receipt 被拒 → 抛错进入错误分支。 */
 function assertAccepted(receipt) {
