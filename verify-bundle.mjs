@@ -137,7 +137,8 @@ let wireSeq = 0
 for (let t = 1; t <= 15; t++) {
   fakeWireEvents.push({ type: 'turn/start', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
   fakeWireEvents.push({ type: 'user/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第' + t + '问' }] } })
-  fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { blocks: [{ kind: 'text', text: '第' + t + '答' }] } })
+  // 官方 jsonl 实测形状(8-29 模组的-save7.zip 取证):assistant/message.data.message.content
+  fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '第' + t + '答' }] } } })
   fakeWireEvents.push({ type: 'turn/end', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
 }
 // 上游 v0.1.2 @Remote 网关契约:rpc.call('/api','session/page',{args:{request:{address,throughSeq,beforeSeq?,maxMessages?}}})
@@ -416,6 +417,8 @@ try {
 
   if (registeredApi.hasSessionsService() !== true) { console.error('FAIL hasSessionsService'); process.exit(1) }
   console.log('ALL OK')
+  // 显式退出:自动存档心跳定时器(setInterval)会挂住事件循环。
+  process.exit(0)
 } catch (error) {
   console.error('FAIL e2e:', error)
   process.exit(1)

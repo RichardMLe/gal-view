@@ -1,11 +1,19 @@
 // 全局自动存档控制器(apply 级,不依赖任何视图组件挂载):
 // - 回合计数:官方 history 转写(captureTranscript)为唯一计数来源,与存档内容同源;
-// - 触发源(双源):sessions.list 订阅(主,上游 v0.1.2 实测仍在,byId[id].running 驱动
-//   回合落定通知)+ 当前会话 binding.session 订阅(兜底,防运行时 list 面差异);
+// - 触发源(三保险):
+//   ① sessions.list 订阅(主,上游 v0.1.2 实测仍在,byId[id].running 驱动回合落定通知)
+//   ② 当前会话 binding.session 订阅(兜底,防运行时 list 面差异)
+//   ③ 心跳轮询(默认 2s):list 订阅若在 apply 时错过服务挂载(offList=null)也能自愈;
+//      同时负责基线初始化重试(initSession 失败后不断重试直到拿到转写)
+// - 节流竞态自愈:回合刚结束时到达的 tick 常落在节流窗口内(会话流式期间 tick 频繁,
+//   最后一次检查贴近回合结束),若直接丢弃该 tick,安静下来的会话不会再有任何事件,
+//   该回合的自动档就永久错过(8-29 实测:自动15 触发后自动16 永不出现)。因此节流
+//   拦截时不丢弃,而是安排一次延迟结算(节流到期后再跑 maybeSave)。
+// - 转写瞬时失败(窗口未就绪)有限重试(3s/6s 各一次),永久失败则等下次事件;
 // - 落定判定:复用 api.waitSettled(binding 快照/list 快照双路径);
 // - 保存动作:api.performFileSave(history 转写 + 一致性守卫 + 互斥);
 // - 状态发布:statusSource 可观察源(设置面板显示"上次结果/下次还需几轮")。
-// 零 React 依赖,纯注入接口,可单测。
+// 零 React 依赖,纯注入接口,可单测(heartbeatMs/throttleMsOf 可注入加速测试)。
 
 /** 从会话列表快照取当前会话 id(与 index.mjs 的 sessionOf 同语义)。 */
 function sessionOf(snapshot) {
@@ -20,12 +28,16 @@ function sessionOf(snapshot) {
  * @param deps.api - createSceneApi 产物(waitSettled/performFileSave/captureTranscript)。
  * @param deps.sceneSource - 场景设置(autoSaveEvery)。
  * @param deps.statusSource - 自动存档状态可观察源(update/getSnapshot)。
+ * @param deps.heartbeatMs - 心跳周期(默认 2000;测试注入小值)。
+ * @param deps.throttleMsOf - 节流策略 (interval) => ms(默认 3s 起步、随间隔缩放、10s 封顶)。
  * @returns disposer。
  */
-export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
+export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, heartbeatMs = 2000, throttleMsOf = null }) {
   const perSession = new Map()
   let currentId = null
   let disposed = false
+  let retryTimer = null
+  let retryAttempt = 0
 
   const keyOf = id => 'gal-view:auto:' + String(id)
 
@@ -34,6 +46,11 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       ? sceneSource.getSnapshot()?.settings?.autoSaveEvery
       : undefined
     return typeof value === 'number' ? value : 10
+  }
+
+  const throttleFor = (interval) => {
+    if (typeof throttleMsOf === 'function') return Math.max(0, throttleMsOf(interval))
+    return Math.max(3000, Math.min(10000, interval * 3000))
   }
 
   const publish = (patch) => {
@@ -50,30 +67,51 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     }
   }
 
+  /** 延迟结算(单定时器,幂等):节流拦截/转写瞬时失败/结算忙时安排,不丢回合。 */
+  const scheduleRetry = (delayMs) => {
+    if (disposed || retryTimer !== null) return
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      void maybeSave()
+    }, Math.max(0, delayMs))
+  }
+
+  /** 基线初始化(可重试):首次成功转写建立 turns/baseline;失败保持 initOk=false,
+   * 由心跳 pulse 持续重试——list 订阅若在 apply 时错过服务,基线也能自愈建立。 */
   const initSession = async (id) => {
-    if (perSession.has(id)) return
-    perSession.set(id, { turns: 0, baseline: null })
-    if (typeof api?.captureTranscript === 'function') {
-      try {
-        const transcript = await api.captureTranscript(id)
-        if (transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number') {
-          const rec = perSession.get(id)
-          if (rec !== null && rec !== undefined) rec.turns = transcript.turns
-        } else if (transcript !== null && transcript !== undefined) {
-          publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录:' + String(transcript.error ?? '未知') })
-        }
-      } catch {
-        // 忽略:history 不可用时转写计数不可用(自动存档降级为不触发)。
-      }
+    let rec = perSession.get(id)
+    if (rec === null || rec === undefined) {
+      rec = { turns: 0, baseline: null, initOk: false, initBusy: false }
+      perSession.set(id, rec)
     }
-    const rec = perSession.get(id)
-    if (rec === null || rec === undefined) return
-    // 旧版本留下的基线可能大于当前总回合数(旧计数口径),钳制到 ≤ 当前回合,
-    // 否则「轮次-基线 < 间隔」永远成立、自动存档永不触发。
-    const stored = readStoredBaseline(id)
-    rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns
-    publish({ turns: rec.turns, baseline: rec.baseline, every: every() })
-    void maybeSave()
+    if (rec.initOk === true || rec.initBusy === true) return
+    rec.initBusy = true
+    try {
+      if (typeof api?.captureTranscript === 'function') {
+        let ok = false
+        try {
+          const transcript = await api.captureTranscript(id)
+          if (transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number') {
+            rec.turns = transcript.turns
+            ok = true
+          } else if (transcript !== null && transcript !== undefined) {
+            publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录:' + String(transcript.error ?? '未知') })
+          }
+        } catch {
+          // 忽略:history 不可用时转写计数不可用(心跳会重试初始化)。
+        }
+        if (!ok) return
+      }
+      rec.initOk = true
+      // 旧版本留下的基线可能大于当前总回合数(旧计数口径),钳制到 ≤ 当前回合,
+      // 否则「轮次-基线 < 间隔」永远成立、自动存档永不触发。
+      const stored = readStoredBaseline(id)
+      rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns
+      publish({ turns: rec.turns, baseline: rec.baseline, every: every() })
+      void maybeSave()
+    } finally {
+      rec.initBusy = false
+    }
   }
 
   const maybeSave = async () => {
@@ -82,7 +120,10 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     if (id === null || id === undefined) return
     const rec = perSession.get(id)
     if (rec === null || rec === undefined) return
-    if (rec.busy) return
+    if (rec.busy) {
+      scheduleRetry(1500)
+      return
+    }
     const interval = every()
     if (interval <= 0) {
       publish({ turns: rec.turns, baseline: rec.baseline, every: interval })
@@ -91,9 +132,14 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     if (typeof api?.captureTranscript !== 'function' || typeof api?.waitSettled !== 'function' || typeof api?.performFileSave !== 'function') return
     // 节流随间隔缩放(间隔 1 → 3s;大间隔封顶 10s):检查会走一次完整 history 转写,
     // 又要满足"每 N 轮一档",固定 10s 会把间隔=1 的连续存档合并。
-    const throttleMs = Math.max(3000, Math.min(10000, interval * 3000))
+    const throttleMs = throttleFor(interval)
     const nowMs = Date.now()
-    if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < throttleMs) return
+    if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < throttleMs) {
+      // 节流拦截 ≠ 丢弃:回合结束时刻的 tick 常落在这里,而此后会话安静、不再有事件;
+      // 安排延迟结算保证该回合的自动档最终被结算(见文件头注释的 8-29 事故)。
+      scheduleRetry(rec.lastCheckAt + throttleMs - nowMs + 80)
+      return
+    }
     rec.lastCheckAt = nowMs
     rec.busy = true
     try {
@@ -103,8 +149,14 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       const turns = transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number' ? transcript.turns : null
       if (turns === null) {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录' + (transcript !== null && transcript !== undefined && transcript.error !== null ? ':' + String(transcript.error) : '') })
+        // 转写瞬时失败(事件窗口尚未就绪)有限重试;永久失败则等下次事件/心跳。
+        if (retryAttempt < 2) {
+          retryAttempt += 1
+          scheduleRetry(3000 * retryAttempt)
+        }
         return
       }
+      retryAttempt = 0
       rec.turns = turns
       if (rec.baseline === null) {
         const stored = readStoredBaseline(id)
@@ -183,7 +235,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
   }
 
   /** 绑定当前会话快照订阅(兜底触发源);binding 在会话 scope 建立前为 undefined,
-   * 故每次 tick 都重试(boundSessionId 守卫,幂等)。 */
+   * 故每次 tick/pulse 都重试(boundSessionId 守卫,幂等)。 */
   let boundSessionId = null
   let offSession = null
   const ensureSessionBinding = (id) => {
@@ -199,37 +251,64 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     }
   }
 
+  /** 会话切换(事件 tick 与心跳 pulse 共用)。 */
+  const switchTo = (id) => {
+    currentId = id
+    if (offSession !== null) {
+      offSession()
+      offSession = null
+    }
+    boundSessionId = null
+    if (id !== null && id !== undefined) {
+      void initSession(id)
+      ensureSessionBinding(id)
+    }
+    publish({ turns: 0, baseline: 0 })
+  }
+
+  /** 事件触发:会话变化即结算。 */
   const tick = () => {
     if (disposed) return
     const id = resolveId()
     if (id !== currentId) {
-      currentId = id
-      if (offSession !== null) {
-        offSession()
-        offSession = null
-      }
-      boundSessionId = null
-      if (id !== null && id !== undefined) {
-        void initSession(id)
-        ensureSessionBinding(id)
-      }
-      publish({ turns: 0, baseline: 0 })
+      switchTo(id)
       return
     }
     if (id !== null && id !== undefined) ensureSessionBinding(id)
     void maybeSave()
   }
 
-  // 触发源:list 订阅(主)+ 会话快照订阅(兜底);两个源是同一状态机的不同投影,
-  // 重复通知由 maybeSave 的节流(lastCheckAt)吸收。
+  /** 心跳(默认 2s):不直接结算(避免静默期每 2s 一次全量转写),只做三件自愈:
+   * ① 会话切换检测(订阅在 apply 时错过服务也能跟上);
+   * ② binding 订阅补挂;
+   * ③ 基线初始化重试(initSession 转写失败时)。 */
+  const pulse = () => {
+    if (disposed) return
+    const id = resolveId()
+    if (id !== currentId) {
+      switchTo(id)
+      return
+    }
+    if (id !== null && id !== undefined) {
+      ensureSessionBinding(id)
+      const rec = perSession.get(id)
+      if (rec !== null && rec !== undefined && rec.initOk !== true) void initSession(id)
+    }
+  }
+
+  // 触发源:list 订阅(主)+ 会话快照订阅(兜底)+ 心跳(自愈);
+  // 前两者是同一状态机的不同投影,重复通知由 maybeSave 的节流吸收。
   const offList = typeof sessionsSvc?.list?.subscribe === 'function' ? sessionsSvc.list.subscribe(tick) : null
   tick()
+  const heartbeatTimer = setInterval(pulse, Math.max(200, heartbeatMs))
   const offScene = typeof sceneSource?.subscribe === 'function'
     ? sceneSource.subscribe(() => { void maybeSave() })
     : null
 
   return () => {
     disposed = true
+    clearInterval(heartbeatTimer)
+    if (retryTimer !== null) clearTimeout(retryTimer)
     if (offList !== null) offList()
     if (offSession !== null) offSession()
     if (offScene !== null) offScene()

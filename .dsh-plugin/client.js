@@ -5973,6 +5973,17 @@ function isAppendSurfaceEvent(event) {
   if (event === null || typeof event !== "object") return false;
   return SURFACE_EVENT_TYPES.includes(event.type) && event.surfaceOp === "append";
 }
+function wireAssistantText(data) {
+  if (data === null || typeof data !== "object") return "";
+  const message = data.message;
+  const blocks = message !== null && typeof message === "object" && Array.isArray(message.content) ? message.content : Array.isArray(data.blocks) ? data.blocks : null;
+  if (blocks === null) return "";
+  return cleanDialogueText(blocks.map((block) => {
+    if (block === null || typeof block !== "object") return "";
+    const isText = block.type === "text" || block.kind === "text";
+    return isText && typeof block.text === "string" ? block.text : "";
+  }).filter((text) => text !== "").join("\n"));
+}
 function lineFromWireEvent(event) {
   if (!isAppendSurfaceEvent(event)) return null;
   const data = event.data !== null && typeof event.data === "object" ? event.data : {};
@@ -5983,7 +5994,7 @@ function lineFromWireEvent(event) {
     return text === "" ? null : { kind: "player", text };
   }
   if (event.type === "assistant/message") {
-    const text = assistantToText(data.blocks);
+    const text = wireAssistantText(data);
     return text === "" ? null : { kind: "assistant", text };
   }
   return null;
@@ -6534,14 +6545,20 @@ function sessionOf2(snapshot) {
   if (typeof snapshot.currentId === "string" && snapshot.currentId !== "") return snapshot.currentId;
   return null;
 }
-function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
+function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, heartbeatMs = 2e3, throttleMsOf = null }) {
   const perSession = /* @__PURE__ */ new Map();
   let currentId = null;
   let disposed = false;
+  let retryTimer = null;
+  let retryAttempt = 0;
   const keyOf = (id) => "gal-view:auto:" + String(id);
   const every = () => {
     const value = sceneSource !== null && sceneSource !== void 0 && typeof sceneSource.getSnapshot === "function" ? sceneSource.getSnapshot()?.settings?.autoSaveEvery : void 0;
     return typeof value === "number" ? value : 10;
+  };
+  const throttleFor = (interval) => {
+    if (typeof throttleMsOf === "function") return Math.max(0, throttleMsOf(interval));
+    return Math.max(3e3, Math.min(1e4, interval * 3e3));
   };
   const publish = (patch) => {
     if (statusSource === null || statusSource === void 0 || typeof statusSource.update !== "function") return;
@@ -6555,27 +6572,44 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
       return null;
     }
   };
+  const scheduleRetry = (delayMs) => {
+    if (disposed || retryTimer !== null) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void maybeSave();
+    }, Math.max(0, delayMs));
+  };
   const initSession = async (id) => {
-    if (perSession.has(id)) return;
-    perSession.set(id, { turns: 0, baseline: null });
-    if (typeof api?.captureTranscript === "function") {
-      try {
-        const transcript = await api.captureTranscript(id);
-        if (transcript !== null && transcript !== void 0 && transcript.error === null && typeof transcript.turns === "number") {
-          const rec2 = perSession.get(id);
-          if (rec2 !== null && rec2 !== void 0) rec2.turns = transcript.turns;
-        } else if (transcript !== null && transcript !== void 0) {
-          publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55:" + String(transcript.error ?? "\u672A\u77E5") });
-        }
-      } catch {
-      }
+    let rec = perSession.get(id);
+    if (rec === null || rec === void 0) {
+      rec = { turns: 0, baseline: null, initOk: false, initBusy: false };
+      perSession.set(id, rec);
     }
-    const rec = perSession.get(id);
-    if (rec === null || rec === void 0) return;
-    const stored = readStoredBaseline(id);
-    rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns;
-    publish({ turns: rec.turns, baseline: rec.baseline, every: every() });
-    void maybeSave();
+    if (rec.initOk === true || rec.initBusy === true) return;
+    rec.initBusy = true;
+    try {
+      if (typeof api?.captureTranscript === "function") {
+        let ok = false;
+        try {
+          const transcript = await api.captureTranscript(id);
+          if (transcript !== null && transcript !== void 0 && transcript.error === null && typeof transcript.turns === "number") {
+            rec.turns = transcript.turns;
+            ok = true;
+          } else if (transcript !== null && transcript !== void 0) {
+            publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55:" + String(transcript.error ?? "\u672A\u77E5") });
+          }
+        } catch {
+        }
+        if (!ok) return;
+      }
+      rec.initOk = true;
+      const stored = readStoredBaseline(id);
+      rec.baseline = stored !== null ? Math.min(stored, rec.turns) : rec.turns;
+      publish({ turns: rec.turns, baseline: rec.baseline, every: every() });
+      void maybeSave();
+    } finally {
+      rec.initBusy = false;
+    }
   };
   const maybeSave = async () => {
     if (disposed) return;
@@ -6583,16 +6617,22 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
     if (id === null || id === void 0) return;
     const rec = perSession.get(id);
     if (rec === null || rec === void 0) return;
-    if (rec.busy) return;
+    if (rec.busy) {
+      scheduleRetry(1500);
+      return;
+    }
     const interval = every();
     if (interval <= 0) {
       publish({ turns: rec.turns, baseline: rec.baseline, every: interval });
       return;
     }
     if (typeof api?.captureTranscript !== "function" || typeof api?.waitSettled !== "function" || typeof api?.performFileSave !== "function") return;
-    const throttleMs = Math.max(3e3, Math.min(1e4, interval * 3e3));
+    const throttleMs = throttleFor(interval);
     const nowMs = Date.now();
-    if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < throttleMs) return;
+    if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < throttleMs) {
+      scheduleRetry(rec.lastCheckAt + throttleMs - nowMs + 80);
+      return;
+    }
     rec.lastCheckAt = nowMs;
     rec.busy = true;
     try {
@@ -6600,8 +6640,13 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
       const turns = transcript !== null && transcript !== void 0 && transcript.error === null && typeof transcript.turns === "number" ? transcript.turns : null;
       if (turns === null) {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55" + (transcript !== null && transcript !== void 0 && transcript.error !== null ? ":" + String(transcript.error) : "") });
+        if (retryAttempt < 2) {
+          retryAttempt += 1;
+          scheduleRetry(3e3 * retryAttempt);
+        }
         return;
       }
+      retryAttempt = 0;
       rec.turns = turns;
       if (rec.baseline === null) {
         const stored = readStoredBaseline(id);
@@ -6690,33 +6735,52 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource }) {
     } catch {
     }
   };
+  const switchTo = (id) => {
+    currentId = id;
+    if (offSession !== null) {
+      offSession();
+      offSession = null;
+    }
+    boundSessionId = null;
+    if (id !== null && id !== void 0) {
+      void initSession(id);
+      ensureSessionBinding(id);
+    }
+    publish({ turns: 0, baseline: 0 });
+  };
   const tick = () => {
     if (disposed) return;
     const id = resolveId();
     if (id !== currentId) {
-      currentId = id;
-      if (offSession !== null) {
-        offSession();
-        offSession = null;
-      }
-      boundSessionId = null;
-      if (id !== null && id !== void 0) {
-        void initSession(id);
-        ensureSessionBinding(id);
-      }
-      publish({ turns: 0, baseline: 0 });
+      switchTo(id);
       return;
     }
     if (id !== null && id !== void 0) ensureSessionBinding(id);
     void maybeSave();
   };
+  const pulse = () => {
+    if (disposed) return;
+    const id = resolveId();
+    if (id !== currentId) {
+      switchTo(id);
+      return;
+    }
+    if (id !== null && id !== void 0) {
+      ensureSessionBinding(id);
+      const rec = perSession.get(id);
+      if (rec !== null && rec !== void 0 && rec.initOk !== true) void initSession(id);
+    }
+  };
   const offList = typeof sessionsSvc?.list?.subscribe === "function" ? sessionsSvc.list.subscribe(tick) : null;
   tick();
+  const heartbeatTimer = setInterval(pulse, Math.max(200, heartbeatMs));
   const offScene = typeof sceneSource?.subscribe === "function" ? sceneSource.subscribe(() => {
     void maybeSave();
   }) : null;
   return () => {
     disposed = true;
+    clearInterval(heartbeatTimer);
+    if (retryTimer !== null) clearTimeout(retryTimer);
     if (offList !== null) offList();
     if (offSession !== null) offSession();
     if (offScene !== null) offScene();

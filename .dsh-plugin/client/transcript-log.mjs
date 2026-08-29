@@ -6,7 +6,7 @@
 // 即:type ∈ {user/message, assistant/message, tool/result} 且 surfaceOp==="append"
 // 的事件才是人类可读转写的持久来源。本模块零宿主依赖,可单测。
 
-import { contentToText, assistantToText } from './transcript.mjs'
+import { contentToText, cleanDialogueText } from './transcript.mjs'
 
 /** 官方"人类转写"面事件类型集合。 */
 export const SURFACE_EVENT_TYPES = Object.freeze(['user/message', 'assistant/message', 'tool/result'])
@@ -15,6 +15,28 @@ export const SURFACE_EVENT_TYPES = Object.freeze(['user/message', 'assistant/mes
 export function isAppendSurfaceEvent(event) {
   if (event === null || typeof event !== 'object') return false
   return SURFACE_EVENT_TYPES.includes(event.type) && event.surfaceOp === 'append'
+}
+
+/** 助手消息文本提取(双形状,契约测试覆盖):
+ * - session/page 通道:原始日志形状 data.message.content,文本块 type:'text'
+ *   (官方 jsonl 实测:assistant/message.data = { turn, step, message:{ role, content:[{type:'text'|'reasoning'|'tool-call',...}] }, usage });
+ * - legacy history 通道:data.blocks,文本块 kind:'text'。
+ * 只取 text 块:reasoning/tool-call 不进台词。 */
+export function wireAssistantText(data) {
+  if (data === null || typeof data !== 'object') return ''
+  const message = data.message
+  const blocks = message !== null && typeof message === 'object' && Array.isArray(message.content)
+    ? message.content
+    : (Array.isArray(data.blocks) ? data.blocks : null)
+  if (blocks === null) return ''
+  return cleanDialogueText(blocks
+    .map(block => {
+      if (block === null || typeof block !== 'object') return ''
+      const isText = block.type === 'text' || block.kind === 'text'
+      return isText && typeof block.text === 'string' ? block.text : ''
+    })
+    .filter(text => text !== '')
+    .join('\n'))
 }
 
 /** 单个线事件 → 台词行;无文本/非转写事件返回 null。 */
@@ -28,7 +50,7 @@ export function lineFromWireEvent(event) {
     return text === '' ? null : { kind: 'player', text }
   }
   if (event.type === 'assistant/message') {
-    const text = assistantToText(data.blocks)
+    const text = wireAssistantText(data)
     return text === '' ? null : { kind: 'assistant', text }
   }
   // tool/result:工具噪音不进台词(Galgame 对话框不展示),完整内容见官方日志 zip。

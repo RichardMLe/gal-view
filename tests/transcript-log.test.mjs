@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isAppendSurfaceEvent, lineFromWireEvent, wireEventsToLines, readHistoryResponse, SURFACE_EVENT_TYPES } from '../.dsh-plugin/client/transcript-log.mjs'
+import { isAppendSurfaceEvent, lineFromWireEvent, wireAssistantText, wireEventsToLines, readHistoryResponse, SURFACE_EVENT_TYPES } from '../.dsh-plugin/client/transcript-log.mjs'
 
 test('isAppendSurfaceEvent 只认官方转写来源(append 面,替换副本过滤)', () => {
   assert.equal(isAppendSurfaceEvent(null), false)
@@ -13,16 +13,36 @@ test('isAppendSurfaceEvent 只认官方转写来源(append 面,替换副本过�
   assert.deepEqual(SURFACE_EVENT_TYPES, ['user/message', 'assistant/message', 'tool/result'])
 })
 
+test('wireAssistantText:session/page 原始日志形状 data.message.content(type:text)', () => {
+  // 官方 jsonl 实测形状(8-29 模组的-save7.zip 取证)
+  const wire = wireAssistantText({ turn: 1, step: 1, message: { role: 'assistant', content: [
+    { type: 'reasoning', text: '思考过程(不进台词)' },
+    { type: 'tool-call', id: 'c1', name: 'glob', arguments: '{}' },
+    { type: 'text', text: '你好呀\n第二行' },
+  ] } })
+  assert.equal(wire, '你好呀\n第二行')
+  // legacy 形状兜底:data.blocks + kind:'text'
+  const legacy = wireAssistantText({ blocks: [{ kind: 'reasoning', text: '思考' }, { kind: 'text', text: '旧通道答复' }] })
+  assert.equal(legacy, '旧通道答复')
+  assert.equal(wireAssistantText(null), '')
+  assert.equal(wireAssistantText({}), '')
+  assert.equal(wireAssistantText({ message: { content: [{ type: 'tool-call' }] } }), '')
+})
+
 test('lineFromWireEvent:user/steering → 玩家行,assistant → AI 行,工具结果不进台词', () => {
   const user = lineFromWireEvent({ type: 'user/message', surfaceOp: 'append', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] } })
   assert.deepEqual(user, { kind: 'player', text: '你好' })
   const steering = lineFromWireEvent({ type: 'user/message', surfaceOp: 'append', seq: 2, data: { source: { kind: 'steering' }, content: [{ type: 'text', text: '继续' }] } })
   assert.deepEqual(steering, { kind: 'player', text: '继续' })
-  const ai = lineFromWireEvent({ type: 'assistant/message', surfaceOp: 'append', seq: 3, data: { blocks: [{ kind: 'reasoning', text: '思考' }, { kind: 'text', text: '你好呀' }] } })
-  assert.deepEqual(ai, { kind: 'assistant', text: '你好呀' })
-  assert.equal(lineFromWireEvent({ type: 'tool/result', surfaceOp: 'append', seq: 4, data: {} }), null)
-  assert.equal(lineFromWireEvent({ type: 'assistant/message', surfaceOp: 'append', seq: 5, data: { blocks: [{ kind: 'tool-call', name: 'x' }] } }), null)
-  assert.equal(lineFromWireEvent({ type: 'user/message', surfaceOp: 'replace', seq: 6, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '被替换' }] } }), null)
+  // 新通道(官方 jsonl)形状:data.message.content
+  const aiWire = lineFromWireEvent({ type: 'assistant/message', surfaceOp: 'append', seq: 3, data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '你好呀' }] } } })
+  assert.deepEqual(aiWire, { kind: 'assistant', text: '你好呀' })
+  // legacy 形状兜底:data.blocks
+  const aiLegacy = lineFromWireEvent({ type: 'assistant/message', surfaceOp: 'append', seq: 4, data: { blocks: [{ kind: 'reasoning', text: '思考' }, { kind: 'text', text: '旧通道答复' }] } })
+  assert.deepEqual(aiLegacy, { kind: 'assistant', text: '旧通道答复' })
+  assert.equal(lineFromWireEvent({ type: 'tool/result', surfaceOp: 'append', seq: 5, data: {} }), null)
+  assert.equal(lineFromWireEvent({ type: 'assistant/message', surfaceOp: 'append', seq: 6, data: { message: { content: [{ type: 'tool-call', name: 'x' }] } } }), null)
+  assert.equal(lineFromWireEvent({ type: 'user/message', surfaceOp: 'replace', seq: 7, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '被替换' }] } }), null)
 })
 
 test('wireEventsToLines:完整转写(行/总回合/存档点 seq)', () => {
