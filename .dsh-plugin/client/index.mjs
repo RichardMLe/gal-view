@@ -530,28 +530,6 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         await new Promise(resolve => setTimeout(resolve, 100))
       }
     },
-    /** 重装当前会话窗口（看门狗用）：官方窗口被重装成不完整尾部时，
-     * resync 重置窗口并重拉基线（open 在已打开时是 no-op，不能恢复）。 */
-    async reopenCurrent() {
-      const id = this.currentSessionId()
-      if (id === null) return false
-      try {
-        const session = sessionsSvc?.binding?.(id)?.session ?? null
-        if (session !== null) {
-          if (typeof session.resync === 'function') {
-            await session.resync()
-            return true
-          }
-          if (typeof session.open === 'function') {
-            await session.open()
-            return true
-          }
-        }
-      } catch (cause) {
-        console.warn('[gal-view:watchdog] 重装会话窗口失败:', cause)
-      }
-      return false
-    },
     /** 记录一次存档操作（看门狗据此判断"官方清空当前选择"是否是我们引发的）。 */
     noteSaveOp() {
       this._noteSaveOp?.()
