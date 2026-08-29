@@ -30,7 +30,13 @@ export const HOST_CONTRACT = Object.freeze({
   // rpc 网关
   rpcChannel: '/api',
   sessionPageEndpoint: 'session/page',
-  // session/page 请求字段(throughSeq 必须 ≤ 日志尾 seq,主机校验)
+  // session/page 载荷信封:rpc.call(channel, endpoint, { args: { request } })。
+  // 网关 assertExactArguments(types/client/index.js)要求 args 键与描述符
+  // wire 名精确一致;typert.remote-client.js 里 session/page 唯一参数
+  // wire='request'(source:'json', mode:'strict')。平铺 address/throughSeq 会报
+  // "args fields do not match the descriptor: missing \"request\""。
+  pageRequestEnvelope: 'request',
+  // session/page request 内字段(throughSeq 必须 ≤ 日志尾 seq,主机校验)
   pageRequestFields: ['address', 'throughSeq', 'beforeSeq', 'maxMessages'],
   addressKinds: ['session', 'subagent'],
   // session/page 响应
@@ -70,15 +76,16 @@ export function lazyService(ctx, name) {
   })
 }
 
-/** 组装 session/page 请求(纯函数,契约测试覆盖)。 */
+/** 组装 session/page 请求(纯函数,契约测试覆盖)。
+ * 返回网关载荷体(待包进 { args }):{ request: { address, throughSeq, maxMessages, beforeSeq? } }。 */
 export function buildSessionPageRequest(sessionId, opts = {}) {
-  const payload = {
+  const request = {
     address: { kind: 'session', sessionId },
     throughSeq: opts.throughSeq,
     maxMessages: opts.maxMessages ?? 50,
   }
-  if (typeof opts.beforeSeq === 'number') payload.beforeSeq = opts.beforeSeq
-  return payload
+  if (typeof opts.beforeSeq === 'number') request.beforeSeq = opts.beforeSeq
+  return { request }
 }
 
 /** 解析 session/page 响应(纯函数,宽容但显式报错;契约测试覆盖)。 */

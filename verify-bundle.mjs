@@ -140,9 +140,19 @@ for (let t = 1; t <= 15; t++) {
   fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { blocks: [{ kind: 'text', text: '第' + t + '答' }] } })
   fakeWireEvents.push({ type: 'turn/end', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
 }
-// 上游 v0.1.2 @Remote 网关契约:rpc.call('/api','session/page',{args:{address,throughSeq,beforeSeq,maxMessages}})
+// 上游 v0.1.2 @Remote 网关契约:rpc.call('/api','session/page',{args:{request:{address,throughSeq,beforeSeq?,maxMessages?}}})
 // → { ok:true, value:{ records:[{type:'event',event}], hasMore } };throughSeq 必须 ≤ 尾 seq。
-const historyMock = ({ address, throughSeq, beforeSeq, maxMessages }) => {
+// 严格仿真 assertExactArguments(dsh-api-gateway):args 键必须精确等于描述符 wire 名
+// (唯一参数 request),多键/缺键立即失败——信封回归在仿真层就红,不再全绿白绿。
+const assertPageArgs = (args) => {
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new Error('args must be a plain object')
+  const keys = Object.keys(args).sort()
+  if (keys.length !== 1 || keys[0] !== 'request') throw new Error('args fields do not match the descriptor: expected exactly ["request"], got ' + JSON.stringify(keys))
+  const request = args.request
+  if (request === null || typeof request !== 'object' || request.address === undefined || typeof request.throughSeq !== 'number') throw new Error('request must contain address and numeric throughSeq')
+}
+const historyMock = (request) => {
+  const { address, throughSeq, beforeSeq, maxMessages } = request
   const sessionId = address?.kind === 'session' ? address.sessionId : ''
   const all = (sessionId === 's-root' ? fakeWireEvents : []).filter(e => e.seq <= throughSeq)
   let page
@@ -157,7 +167,12 @@ const historyMock = ({ address, throughSeq, beforeSeq, maxMessages }) => {
 }
 const connectionMock = { rpc: { call: (channel, endpoint, payload) => {
   if (channel !== '/api' || endpoint !== 'session/page') return Promise.resolve({ ok: false, error: { code: 'unavailable', message: 'unexpected endpoint' } })
-  return historyMock(payload.args)
+  try {
+    assertPageArgs(payload.args)
+    return historyMock(payload.args.request)
+  } catch (error) {
+    return Promise.resolve({ ok: false, error: { code: 'arguments-invalid', message: error.message } })
+  }
 } } }
 
 // —— slots mock：真正执行 inject 回调并捕获 register 载荷 ——

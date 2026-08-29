@@ -1,8 +1,9 @@
 // 全局自动存档控制器(apply 级,不依赖任何视图组件挂载):
-// - 回合计数:订阅会话列表,统计当前会话 running 的 true→false 跃迁(每完成一轮 +1);
-//   新会话/刷新后用官方 history 转写一次性初始化总回合数;
-// - 落定判定:复用 api.waitSettled(列表摘要 running=false + 静默);
-// - 保存动作:api.performFileSave(history 转写 + zip 导出 + 一致性守卫 + 互斥);
+// - 回合计数:官方 history 转写(captureTranscript)为唯一计数来源,与存档内容同源;
+// - 触发源(双源):sessions.list 订阅(主,上游 v0.1.2 实测仍在,byId[id].running 驱动
+//   回合落定通知)+ 当前会话 binding.session 订阅(兜底,防运行时 list 面差异);
+// - 落定判定:复用 api.waitSettled(binding 快照/list 快照双路径);
+// - 保存动作:api.performFileSave(history 转写 + 一致性守卫 + 互斥);
 // - 状态发布:statusSource 可观察源(设置面板显示"上次结果/下次还需几轮")。
 // 零 React 依赖,纯注入接口,可单测。
 
@@ -113,18 +114,11 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       }
       publish({ turns, baseline: rec.baseline, every: interval })
       if (turns - rec.baseline < interval) return
-      const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
-      const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null
-      if (entry?.running === true) return
+      if (runningOf(id)) return
       const gate = await api.waitSettled({
         quietMs: 1500,
         timeoutMs: 30000,
-        shouldContinue: () => {
-          const s = sessionsSvc?.list?.getSnapshot?.() ?? null
-          const cur = sessionOf(s)
-          const en = cur === id ? s?.byId?.[id] : null
-          return en?.running !== true
-        },
+        shouldContinue: () => runningOf(id) !== true,
       })
       if (!gate.settled) {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '回合未落定' })
@@ -159,21 +153,77 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     }
   }
 
-  const onList = () => {
+  /** 运行态查询(双源):list.byId 优先(running 字段仍在),binding 会话快照兜底。 */
+  const runningOf = (id) => {
+    try {
+      const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
+      const entry = sessionOf(snap) === id ? snap?.byId?.[id] : null
+      if (entry !== null && entry !== undefined && typeof entry.running === 'boolean') return entry.running
+    } catch {
+      // 忽略:走 binding 兜底
+    }
+    try {
+      const session = sessionsSvc?.binding?.(id)?.session ?? null
+      const s = typeof session?.getSnapshot === 'function' ? session.getSnapshot() : null
+      return s?.running === true
+    } catch {
+      return false
+    }
+  }
+
+  /** 当前会话 id(双源):list.current 优先(服务级权威),视图注入兜底。 */
+  const resolveId = () => {
+    try {
+      const id = sessionOf(sessionsSvc?.list?.getSnapshot?.() ?? null)
+      if (id !== null) return id
+    } catch {
+      // 忽略:走视图注入
+    }
+    return typeof api?.currentSessionId === 'function' ? api.currentSessionId() : null
+  }
+
+  /** 绑定当前会话快照订阅(兜底触发源);binding 在会话 scope 建立前为 undefined,
+   * 故每次 tick 都重试(boundSessionId 守卫,幂等)。 */
+  let boundSessionId = null
+  let offSession = null
+  const ensureSessionBinding = (id) => {
+    if (disposed || boundSessionId === id) return
+    try {
+      const session = sessionsSvc?.binding?.(id)?.session ?? null
+      if (session !== null && typeof session.subscribe === 'function') {
+        boundSessionId = id
+        offSession = session.subscribe(() => { void maybeSave() })
+      }
+    } catch {
+      // 忽略:list 订阅仍会驱动 tick
+    }
+  }
+
+  const tick = () => {
     if (disposed) return
-    const snap = sessionsSvc?.list?.getSnapshot?.() ?? null
-    const id = sessionOf(snap)
+    const id = resolveId()
     if (id !== currentId) {
-      if (id !== null && id !== undefined) void initSession(id)
       currentId = id
+      if (offSession !== null) {
+        offSession()
+        offSession = null
+      }
+      boundSessionId = null
+      if (id !== null && id !== undefined) {
+        void initSession(id)
+        ensureSessionBinding(id)
+      }
       publish({ turns: 0, baseline: 0 })
       return
     }
+    if (id !== null && id !== undefined) ensureSessionBinding(id)
     void maybeSave()
   }
 
-  const offList = typeof sessionsSvc?.list?.subscribe === 'function' ? sessionsSvc.list.subscribe(onList) : null
-  onList()
+  // 触发源:list 订阅(主)+ 会话快照订阅(兜底);两个源是同一状态机的不同投影,
+  // 重复通知由 maybeSave 的节流(lastCheckAt)吸收。
+  const offList = typeof sessionsSvc?.list?.subscribe === 'function' ? sessionsSvc.list.subscribe(tick) : null
+  tick()
   const offScene = typeof sceneSource?.subscribe === 'function'
     ? sceneSource.subscribe(() => { void maybeSave() })
     : null
@@ -181,6 +231,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
   return () => {
     disposed = true
     if (offList !== null) offList()
+    if (offSession !== null) offSession()
     if (offScene !== null) offScene()
   }
 }

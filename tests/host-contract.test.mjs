@@ -10,6 +10,7 @@ import {
 test('契约快照:网关/分页/快照/DOM 字段与实测一致', () => {
   assert.equal(HOST_CONTRACT.rpcChannel, '/api')
   assert.equal(HOST_CONTRACT.sessionPageEndpoint, 'session/page')
+  assert.equal(HOST_CONTRACT.pageRequestEnvelope, 'request')
   assert.deepEqual(HOST_CONTRACT.pageRequestFields, ['address', 'throughSeq', 'beforeSeq', 'maxMessages'])
   assert.deepEqual(HOST_CONTRACT.addressKinds, ['session', 'subagent'])
   assert.deepEqual(HOST_CONTRACT.pageResponseFields, ['records', 'hasMore'])
@@ -25,11 +26,13 @@ test('契约快照:网关/分页/快照/DOM 字段与实测一致', () => {
   assert.equal(HOST_CONTRACT.dom.composerPlaceholder, 'data-composer-placeholder')
 })
 
-test('buildSessionPageRequest:session/page 请求形状(throughSeq 必填,beforeSeq 可选)', () => {
+test('buildSessionPageRequest:session/page 载荷信封 {request}(网关 assertExactArguments 只认 request 键)', () => {
   const full = buildSessionPageRequest('s1', { throughSeq: 42, maxMessages: 50, beforeSeq: 10 })
-  assert.deepEqual(full, { address: { kind: 'session', sessionId: 's1' }, throughSeq: 42, maxMessages: 50, beforeSeq: 10 })
+  assert.deepEqual(full, { request: { address: { kind: 'session', sessionId: 's1' }, throughSeq: 42, maxMessages: 50, beforeSeq: 10 } })
   const minimal = buildSessionPageRequest('s2', { throughSeq: 7 })
-  assert.deepEqual(minimal, { address: { kind: 'session', sessionId: 's2' }, throughSeq: 7, maxMessages: 50 })
+  assert.deepEqual(minimal, { request: { address: { kind: 'session', sessionId: 's2' }, throughSeq: 7, maxMessages: 50 } })
+  // 信封外不允许任何多余键(网关会报 unexpected)
+  assert.deepEqual(Object.keys(full), ['request'])
 })
 
 test('readSessionPageResponse:ok 形状 / 失败可读 / 垃圾宽容', () => {
