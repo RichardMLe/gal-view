@@ -116,6 +116,11 @@ const sessionsMock = {
       events: id === 's-root' ? [{ seq: windowTailSeq, type: 'turn/end', time: 0, data: {} }] : [],
       resync: () => { resyncCalls.push(id); return Promise.resolve() },
     },
+    // 上游 v0.1.2:captureTranscript 的 throughSeq 取自事件窗口最后一条。
+    eventSource: {
+      getSnapshot: () => ({ entries: id === 's-root' ? [{ type: 'event', event: { seq: windowTailSeq, type: 'turn/end', time: 0, data: {} } }] : [] }),
+      subscribe: () => () => {},
+    },
   }),
 }
 const workspacesMock = {
@@ -135,8 +140,11 @@ for (let t = 1; t <= 15; t++) {
   fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { blocks: [{ kind: 'text', text: '第' + t + '答' }] } })
   fakeWireEvents.push({ type: 'turn/end', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
 }
-const historyMock = ({ sessionId, beforeSeq, maxMessages }) => {
-  const all = sessionId === 's-root' ? fakeWireEvents : []
+// 上游 v0.1.2 @Remote 网关契约:rpc.call('/api','session/page',{args:{address,throughSeq,beforeSeq,maxMessages}})
+// → { ok:true, value:{ records:[{type:'event',event}], hasMore } };throughSeq 必须 ≤ 尾 seq。
+const historyMock = ({ address, throughSeq, beforeSeq, maxMessages }) => {
+  const sessionId = address?.kind === 'session' ? address.sessionId : ''
+  const all = (sessionId === 's-root' ? fakeWireEvents : []).filter(e => e.seq <= throughSeq)
   let page
   if (beforeSeq === undefined) {
     page = all.slice(-maxMessages)
@@ -145,10 +153,12 @@ const historyMock = ({ sessionId, beforeSeq, maxMessages }) => {
     page = idx > 0 ? all.slice(Math.max(0, idx - maxMessages), idx) : []
   }
   const hasMore = all.length > 0 && page.length > 0 && all[0].seq < page[0].seq
-  // 与官方 web-runtime 实测契约一致:{ result: { ok, value: { events, hasMore, projections } } }
-  return Promise.resolve({ result: { ok: true, value: { events: page.map(event => ({ event, view: null })), hasMore, projections: undefined } } })
+  return Promise.resolve({ ok: true, value: { records: page.map(event => ({ type: 'event', event })), hasMore } })
 }
-const connectionMock = { api: { sessions: { history: historyMock } } }
+const connectionMock = { rpc: { call: (channel, endpoint, payload) => {
+  if (channel !== '/api' || endpoint !== 'session/page') return Promise.resolve({ ok: false, error: { code: 'unavailable', message: 'unexpected endpoint' } })
+  return historyMock(payload.args)
+} } }
 
 // —— slots mock：真正执行 inject 回调并捕获 register 载荷 ——
 let registeredApi = null

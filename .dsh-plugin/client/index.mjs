@@ -35,7 +35,7 @@ import {
   writeSaveFile, readSaveFile, removeSaveFile, downloadTextFile,
   writeSaveZip, downloadBlobFile, withTimeout,
 } from './fsaccess.mjs'
-import { wireEventsToLines, readHistoryResponse } from './transcript-log.mjs'
+import { wireEventsToLines } from './transcript-log.mjs'
 import { createGlobalAutoSave } from './autosave.mjs'
 import { assistantDisplayName } from './transcript.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
@@ -126,6 +126,9 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
   const current = () => sceneSource.getSnapshot()
   /** 存档互斥锁(自动/手动共用;同一时刻只有一份存档在跑)。 */
   let saveLocked = false
+  /** 当前会话 id(上游 v0.1.2 起 sessions 服务无 list 快照):GalView 挂载时经
+   * setViewSessionId 注入;旧运行时 list 路径保留兜底。 */
+  let viewSessionId = null
 
   const commit = next => {
     sceneSource.update(next)
@@ -433,7 +436,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         && typeof sessionsSvc.fork === 'function'
         && typeof sessionsSvc.open === 'function'
     },
+    /** 视图注入当前会话 id(上游 v0.1.2:sessions 服务无 list 快照)。 */
+    setViewSessionId(id) {
+      if (typeof id === 'string' && id !== '') viewSessionId = id
+    },
     currentSessionId() {
+      if (typeof viewSessionId === 'string' && viewSessionId !== '') return viewSessionId
       const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
       return typeof snapshot?.current === 'string' ? snapshot.current : null
     },
@@ -506,20 +514,41 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
       return false
     },
-    /** 落定闸门：等主机摘要 running=false 且连续 quietMs 无列表变化。
-     * 返回 { settled, completed, aborted }；服务缺失时 settled=false。 */
+    /** 落定闸门：等 running=false 且连续 quietMs 无变化。
+     * 返回 { settled, completed, aborted }；服务缺失时 settled=false。
+     * 上游 v0.1.2:list 快照没了 → 用绑定会话的 SessionSnapshot(running/blank 仍在),
+     * 合成旧式 { current, byId } 形状喂给纯逻辑 waitSettled;list 路径保留兜底。 */
     async waitSettled(opts = {}) {
       const list = sessionsSvc?.list
-      if (list === null || list === undefined || typeof list.getSnapshot !== 'function') {
-        return { settled: false, completed: false, aborted: false }
+      if (list !== null && list !== undefined && typeof list.getSnapshot === 'function') {
+        return waitSettled({
+          getSnapshot: () => list.getSnapshot(),
+          subscribe: typeof list.subscribe === 'function' ? cb => list.subscribe(cb) : null,
+          quietMs: typeof opts.quietMs === 'number' ? opts.quietMs : 2500,
+          timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 30000,
+          shouldContinue: typeof opts.shouldContinue === 'function' ? opts.shouldContinue : undefined,
+        })
       }
-      return waitSettled({
-        getSnapshot: () => list.getSnapshot(),
-        subscribe: typeof list.subscribe === 'function' ? cb => list.subscribe(cb) : null,
-        quietMs: typeof opts.quietMs === 'number' ? opts.quietMs : 2500,
-        timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 30000,
-        shouldContinue: typeof opts.shouldContinue === 'function' ? opts.shouldContinue : undefined,
-      })
+      // 新面:绑定会话快照合成旧式列表形状。
+      const id = this.currentSessionId()
+      const binding = id !== null ? sessionsSvc?.binding?.(id) : null
+      const session = binding?.session ?? null
+      if (session !== null && typeof session.getSnapshot === 'function') {
+        return waitSettled({
+          getSnapshot: () => {
+            const snap = session.getSnapshot()
+            return {
+              current: id,
+              byId: { [id]: { running: snap?.running === true, completed: !(snap?.blank === true), blank: snap?.blank === true } },
+            }
+          },
+          subscribe: typeof session.subscribe === 'function' ? cb => session.subscribe(cb) : null,
+          quietMs: typeof opts.quietMs === 'number' ? opts.quietMs : 2500,
+          timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 30000,
+          shouldContinue: typeof opts.shouldContinue === 'function' ? opts.shouldContinue : undefined,
+        })
+      }
+      return { settled: false, completed: false, aborted: false }
     },
     /** 轮询等待 list.current 变为指定 id（读档切换落地确认；上限 timeoutMs）。 */
     async waitCurrentIs(id, timeoutMs = 2000) {
@@ -915,40 +944,59 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       }
     },
     /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq, error }。
-     * 不装窗口、不增 DOM(区别于 loadOlder)。失败时 error 携带可读原因(不返回 null),
-     * 供界面直接显示定位。 */
+     * 上游 v0.1.2:ApiProxy 移除,统一 @Remote 网关。新协议:
+     *   connectionSvc.rpc.call('/api', 'session/page', {
+     *     args: { address: { kind:'session', sessionId }, throughSeq, beforeSeq?, maxMessages? }
+     *   }) → { ok:true, value: { records: [{type:'event'|'chunks', event}], hasMore } }
+     * throughSeq 必须 ≤ 日志尾 seq(主机校验),取自会话绑定的事件窗口最后一条。 */
     async captureTranscript(sessionId) {
-      const wire = connectionSvc?.api
-      if (wire === null || wire === undefined || typeof wire?.sessions?.history !== 'function') {
-        return { lines: [], turns: 0, atSeq: null, error: 'history 接口不可用(connection 服务缺失)' }
+      const handle = connectionSvc
+      if (handle === null || handle === undefined || typeof handle?.rpc?.call !== 'function') {
+        return { lines: [], turns: 0, atSeq: null, error: 'history 接口不可用(connection.rpc 缺失)' }
       }
-      const events = []
+      // 当前尾 seq:会话绑定的事件窗口最后一条(窗口未打开时无)。
+      let tailSeq = null
+      try {
+        const eventSource = sessionsSvc?.binding?.(sessionId)?.eventSource ?? null
+        const entries = Array.isArray(eventSource?.getSnapshot?.()?.entries) ? eventSource.getSnapshot().entries : []
+        const last = entries[entries.length - 1]
+        if (last !== undefined && typeof last?.event?.seq === 'number') tailSeq = last.event.seq
+      } catch {
+        // 忽略:走下方显式报错
+      }
+      if (tailSeq === null) return { lines: [], turns: 0, atSeq: null, error: '无法取得会话尾 seq(会话窗口未打开)' }
+      const records = []
       let beforeSeq
       try {
         for (let i = 0; i < 200; i++) {
-          const response = await withTimeout(wire.sessions.history({
-            sessionId,
+          const payload = {
+            address: { kind: 'session', sessionId },
+            throughSeq: tailSeq,
             maxMessages: 50,
             ...(beforeSeq !== undefined ? { beforeSeq } : {}),
-          }), 15000, undefined)
+          }
+          const response = await withTimeout(handle.rpc.call('/api', 'session/page', { args: payload }), 15000, undefined)
           if (response === undefined) throw new Error('history 请求超时')
-          // 官方契约:{ result: { ok, error?, value: { events, hasMore } } }
-          // —— 事件在 result.value.events,不在 result.events(曾读错层导致永远空页)。
-          const pageInfo = readHistoryResponse(response)
-          if (pageInfo.error !== null) throw new Error(pageInfo.error)
-          const page = pageInfo.events
-          if (page.length === 0) break
-          events.unshift(...page)
-          if (pageInfo.hasMore !== true) break
-          const first = page[0]?.event
-          if (first === null || first === undefined || typeof first.seq !== 'number') break
-          beforeSeq = first.seq
+          if (response === null || typeof response !== 'object' || response.ok !== true) {
+            const err = response !== null && typeof response === 'object' && response.error !== null && typeof response.error === 'object'
+              ? String(response.error.message ?? response.error.code ?? '')
+              : '未知错误'
+            throw new Error('history 返回失败: ' + err)
+          }
+          const page = response.value
+          const pageRecords = Array.isArray(page?.records) ? page.records : []
+          if (pageRecords.length === 0) break
+          records.unshift(...pageRecords)
+          if (page.hasMore !== true) break
+          const firstEvent = pageRecords[0]?.event
+          if (firstEvent === null || firstEvent === undefined || typeof firstEvent.seq !== 'number') break
+          beforeSeq = firstEvent.seq
         }
       } catch (cause) {
         console.warn('[gal-view:save] captureTranscript 拉取失败:', cause)
         return { lines: [], turns: 0, atSeq: null, error: String(cause?.message ?? cause) }
       }
-      const result = wireEventsToLines(events)
+      const result = wireEventsToLines(records)
       return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, error: null }
     },
     /** 存档互斥锁(全局:自动存档与手动存档共用)。 */

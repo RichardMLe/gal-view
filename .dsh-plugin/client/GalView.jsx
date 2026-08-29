@@ -584,12 +584,18 @@ function useFillSessionArea(rootRef) {
  * @param props - 槽位框架注入：sessionId/useSession/useInput/inputActions + inject 面的 useScene/useHistory/api。
  * 上游 v0.1.2 适配:对话行数据源从 SessionSnapshot 迁到 useChat 的 legacy 兼容投影。
  */
-export function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api }) {
+export function GalView({ useSession, useInput, inputActions, useChat, useScene, useHistory, useAssets, useFonts, useStore, useProjection, useAutoSaveStatus, actions, api, sessionId }) {
   const scene = useScene(s => s)
   const history = useHistory(h => h)
   const assets = useAssets(a => a)
   const fonts = useFonts(f => f)
   const readState = useStore(s => s)
+  // 上游 v0.1.2:sessions 服务无 list 快照,当前会话 id 由视图注入 api(存档/读档/落定闸门依赖)。
+  useEffect(() => {
+    if (typeof sessionId === 'string' && sessionId !== '' && typeof api?.setViewSessionId === 'function') {
+      api.setViewSessionId(sessionId)
+    }
+  }, [api, sessionId])
   // 顶层无条件调用(hook 顺序纪律):legacy 投影带全旧字段(nodes/turnEnds/partial/runningCalls)。
   const legacySlice = typeof useChat === 'function' ? useChat(s => s.legacy) : undefined
   const legacyView = useMemo(() => legacyToViewState(legacySlice), [legacySlice])
@@ -618,6 +624,8 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
   // 无 useInput/inputActions 的独立挂载环境（冒烟测试）回退到本地状态。
   const inputDraft = typeof useInput === 'function' ? useInput(s => s.draft) : undefined
   const [localDraft, setLocalDraft] = useState('')
+  // 输入法组合期标记:组合期间输入框只走本地值,不写回官方草稿(IME 保护)。
+  const [composing, setComposing] = useState(false)
   const draft = typeof inputDraft === 'string' ? inputDraft : localDraft
   const setSharedDraft = useCallback((text) => {
     if (inputActions !== null && inputActions !== undefined && typeof inputActions.setDraft === 'function') inputActions.setDraft(text)
@@ -1204,8 +1212,18 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
           >
             <textarea
               className="gv-input-box"
-              value={draft}
-              onChange={e => setSharedDraft(e.target.value)}
+              value={composing ? localDraft : draft}
+              onChange={e => {
+                // 输入法组合期(微软拼音等)只更新本地显示值,不写回官方草稿:
+                // 官方草稿回环会在组合期重写 DOM value,打断 IME → 只能输入一个字母。
+                if (composing) setLocalDraft(e.target.value)
+                else setSharedDraft(e.target.value)
+              }}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={e => {
+                setComposing(false)
+                setSharedDraft(e.target.value)
+              }}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()

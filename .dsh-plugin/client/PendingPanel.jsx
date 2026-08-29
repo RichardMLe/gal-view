@@ -96,7 +96,7 @@ function ApprovalCard({ wait }) {
  * 单选自动进入下一题；多选显示「下一题」；「算了 / 先跳过」与选项并列。
  * 提交入口经 onControl 交给 GalView 的输入框按钮。
  */
-function QuestionCard({ wait, draft, setSharedDraft, onControl }) {
+function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, localAnswer, setComposing, setLocalAnswer }) {
   const questions = Array.isArray(wait.payload.questions) ? wait.payload.questions : []
   const [flow, setFlow] = useState(() => ({ index: 0, states: emptyDrafts(questions) }))
   const [busy, setBusy] = useState(false)
@@ -248,9 +248,17 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl }) {
             className="gv-pending-answer-input"
             rows={1}
             placeholder="或输入你的回答……"
-            value={draft}
+            value={composing ? localAnswer : draft}
             disabled={busy}
-            onChange={(e) => setSharedDraft(e.target.value)}
+            onChange={(e) => {
+              if (composing) setLocalAnswer(e.target.value)
+              else setSharedDraft(e.target.value)
+            }}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={(e) => {
+              setComposing(false)
+              setSharedDraft(e.target.value)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -274,6 +282,9 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl }) {
 
 /** 面板整体：无外层包裹框；批准与提问各渲染第一个；背景轻虚化。 */
 export function PendingPanel({ pending, draft, setSharedDraft, onControl }) {
+  // 输入法组合期保护:组合期间只走本地值,不写回官方草稿(否则 IME 只能输入一个字母)。
+  const [composing, setComposing] = useState(false)
+  const [localAnswer, setLocalAnswer] = useState('')
   const items = pendingItems(pending)
   if (items.length === 0) return null
   const approval = items.find(wait => wait.kind === 'approval') ?? null
@@ -283,7 +294,7 @@ export function PendingPanel({ pending, draft, setSharedDraft, onControl }) {
       <div className="gv-pending-veil" aria-hidden="true" />
       <div className="gv-pending-stack">
         {approval !== null && <ApprovalCard key={approval.key} wait={approval} />}
-        {question !== null && <QuestionCard key={question.key} wait={question} draft={draft} setSharedDraft={setSharedDraft} onControl={onControl} />}
+        {question !== null && <QuestionCard key={question.key} wait={question} draft={draft} setSharedDraft={setSharedDraft} onControl={onControl} composing={composing} localAnswer={localAnswer} setComposing={setComposing} setLocalAnswer={setLocalAnswer} />}
       </div>
     </div>
   )
