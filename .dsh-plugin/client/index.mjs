@@ -477,7 +477,8 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         // 隐私模式/配额：忽略（名录仅本会话有效）。
       }
     },
-    /** 面板数据：注册表名录 + 主线程标题（以注册表为准，父链解析兜底）。 */
+    /** 面板数据：注册表名录 + 主线程标题（以注册表为准，父链解析兜底）。
+     * 需求:旧式槽(会话分叉槽)跨工程共享注册表,面板只显示当前工程前缀匹配的槽。 */
     saveIndex() {
       const reg = this.readSlotsRegistry()
       const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
@@ -493,7 +494,12 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
           if (chained !== '' && !isSlotTitle(chained)) rootTitle = chained
         }
       }
-      return { rootId: current, rootTitle, saves: reg.saves, autos: reg.autos }
+      // 当前主标题优先于注册表(投影/list 双源后的 mainTitle)。
+      const live = this.mainTitle()
+      if (live !== '') rootTitle = live
+      const prefix = fileSlotPrefix(rootTitle)
+      const inProject = slot => prefix === '' || String(slot.title ?? '').startsWith(prefix)
+      return { rootId: current, rootTitle, saves: reg.saves.filter(inProject), autos: reg.autos.filter(inProject) }
     },
     /** 归档一个会话（archiveSession 在 workspaces 服务上；sessions 服务没有）。
      * 护栏：官方在「当前会话被归档」时会直接 clear 当前选择（对话栏整个空白），
@@ -615,14 +621,29 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       return { id: slotId, title: value }
     },
     /** 主线程标题：当前会话自身标题优先(用户改名立即生效,读档新线沿用新名),
-     * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。 */
+     * 其次沿父链上溯,最后回退旧注册表。槽位名(xx-saveN/xx-自动N)一律不算主线程名。
+     * 上游 v0.1.2:list 快照没了 → 首选 title 投影(binding.session.projections)。 */
     mainTitle() {
+      const id = this.currentSessionId()
+      if (id !== null) {
+        try {
+          const projections = sessionsSvc?.binding?.(id)?.session?.projections
+          const titleSnap = typeof projections?.faceOf === 'function' ? projections.faceOf('title')?.getSnapshot?.() : null
+          const projected = typeof titleSnap === 'string' && titleSnap !== '' && !isSlotTitle(titleSnap) && !/^s-created-\d+$/.test(titleSnap)
+            ? titleSnap
+            : (titleSnap !== null && typeof titleSnap === 'object' && typeof titleSnap.title === 'string' && titleSnap.title !== '' && !isSlotTitle(titleSnap.title) && !/^s-created-\d+$/.test(titleSnap.title) ? titleSnap.title : '')
+          if (projected !== '') return projected
+        } catch {
+          // 投影缺失:走旧路径
+        }
+      }
       const snapshot = sessionsSvc?.list?.getSnapshot?.() ?? null
       const current = sessionOf(snapshot)
       if (current !== null) {
         const byId = snapshot?.byId ?? {}
         const own = byId?.[current]?.title
-        if (typeof own === 'string' && own !== '' && !isSlotTitle(own)) return own
+        // 注入回退创建的新会话标题是生成名(s-created-N),不算主线程名。
+        if (typeof own === 'string' && own !== '' && !isSlotTitle(own) && !/^s-created-\d+$/.test(own)) return own
         const chained = this.rootTitleOf(current, byId)
         if (chained !== '' && !isSlotTitle(chained)) return chained
       }
@@ -717,17 +738,35 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     /** 手动存档入口专用:手势内准备存档目录(复用已授权或弹系统选择框)。
      * 必须在点击处理器里尽早调用——requestPermission/showDirectoryPicker 脱离
      * 用户手势会被浏览器拒绝(旧流程在导出后才解析目录,是「已授权还反复提示」
-     * 的根因)。返回 { status: 'ready'|'picked'|'cancelled'|'unsupported', dir }。 */
-    async prepareSaveDir() {
+     * 的根因)。返回 { status: 'ready'|'picked'|'cancelled'|'unsupported', dir }。
+     * opts.force=true(面板「重新选择」按钮):跳过已授权复用,直接弹系统选择框。 */
+    async prepareSaveDir(opts = {}) {
+      if (opts.force === true) {
+        if (!fsAccessSupported()) return { status: 'unsupported', dir: null }
+        const picked = await pickDirectory()
+        if (picked === null || picked === undefined) return { status: 'cancelled', dir: null }
+        const dir = await resolveSaveDir()
+        return dir !== null ? { status: 'picked', dir } : { status: 'cancelled', dir: null }
+      }
       return prepareSaveDir()
     },
-    /** 扫描目录列出文件槽位(读每个文件头解析元数据;损坏/非本插件文件跳过)。 */
+    /** 扫描目录列出文件槽位(读每个文件头解析元数据;损坏/非本插件文件跳过)。
+     * 需求:只显示当前工程前缀匹配的存档;自动存档仅显示最新一条。 */
     async listFileSlots() {
       const dir = await resolveSaveDir()
       const saves = []
       const autos = []
       const broken = []
       if (dir === null) return { ready: false, rootTitle: '', saves, autos, broken }
+      const mainTitle = this.mainTitle()
+      const prefix = fileSlotPrefix(mainTitle)
+      // 名字级工程过滤;迁移条目(legacySlotId)文件名带「旧+会话id」不匹配前缀,
+      // 但它们必然来自当前工程的旧注册表,一律放行。
+      const nameInProject = (name) => {
+        if (prefix === '') return true
+        const id = slotIdFromFileName(name)
+        return id === '' || id.startsWith(prefix)
+      }
       const names = await withTimeout(listSaveFiles(dir), 8000, [])
       const mdNames = new Set()
       for (const name of names) {
@@ -735,9 +774,17 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
         const id = slotIdFromFileName(name)
         if (id === '') continue
         const text = await withTimeout(readSaveFile(dir, name), 5000, null)
-        if (text === null) { broken.push(name); continue }
+        if (text === null) {
+          if (nameInProject(name)) broken.push(name)
+          continue
+        }
         const doc = parseSaveDoc(text)
-        if (doc === null) { broken.push(name); continue }
+        if (doc === null) {
+          if (nameInProject(name)) broken.push(name)
+          continue
+        }
+        const belongs = nameInProject(name) || doc.meta.legacySlotId !== null
+        if (!belongs) continue
         mdNames.add(name)
         const entry = {
           id,
@@ -754,12 +801,15 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
       for (const name of names) {
         if (!name.toLowerCase().endsWith('.zip')) continue
         const id = slotIdFromFileName(name)
-        if (id !== '' && !mdNames.has(id + '.md')) broken.push(name + '(孤立日志)')
+        if (id !== '' && mdNames.has(id + '.md')) continue
+        if (!nameInProject(name)) continue
+        broken.push(name + '(孤立日志)')
       }
       saves.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
-      autos.sort((a, b) => a.id.localeCompare(b.id, 'zh-Hans-CN', { numeric: true }))
-      const mainTitle = this.mainTitle()
-      return { ready: true, rootTitle: mainTitle, saves, autos, broken }
+      autos.sort((a, b) => a.savedAt - b.savedAt)
+      // 需求:自动存档仅保留最新一个(显示层只显示最新;写入层已有物理清理)。
+      const latestAutos = autos.length > 0 ? [autos[autos.length - 1]] : []
+      return { ready: true, rootTitle: mainTitle, saves, autos: latestAutos, broken }
     },
     /** 把采集好的记录写入存档文件(纯文件操作,不碰官方会话系统)。
      * payload: { auto, rootTitle, sessionId, atSeq, assistantName, turns, lines,
@@ -1257,12 +1307,22 @@ export function apply(ctx) {
   document.head.append(styleEl)
 
   // 分叉存档依赖客户端 sessions 服务（官方「分叉会话」同一通道）；缺失时功能降级。
-  // 必须在 createSceneApi 之前读取（方法体闭包引用该绑定）。
-  const sessionsSvc = ctx.get('sessions')
+  // 上游 v0.1.2 启动顺序变化:插件 apply 可能早于运行时服务挂载,闭包快照会永远
+  // undefined(读档报"当前环境不支持会话分叉"的真因)。改为惰性代理:每次访问时
+  // 从 ctx 实时解析,方法自动绑定服务实例(proxy 不吞 this)。
+  const lazyService = name => new Proxy({}, {
+    get: (_t, key) => {
+      const s = ctx.get(name)
+      if (s === null || s === undefined) return undefined
+      const v = s[key]
+      return typeof v === 'function' ? v.bind(s) : v
+    },
+  })
+  const sessionsSvc = lazyService('sessions')
   // archiveSession 在 workspaces 服务上（sessions 服务没有）；两者皆可缺省（功能降级）。
-  const workspacesSvc = ctx.get('workspaces')
+  const workspacesSvc = lazyService('workspaces')
   // 官方连接服务：history RPC(captureTranscript 完整转写)经它调用；缺失时降级。
-  const connectionSvc = ctx.get('connection')
+  const connectionSvc = lazyService('connection')
 
   const storage = createStorage()
   // 素材库：IndexedDB 持久 + 内存可观察镜像（图片 dataURL 不进 localStorage）。
@@ -1381,21 +1441,29 @@ export function apply(ctx) {
   if (offSelectionWatch !== null) ctx.effect(() => offSelectionWatch, 'gal-view: selection watchdog')
 
   // 官方「对话」栏输入框默认语句：与 GAL 视窗一致「你想和AI名牌说什么呢？」
-  // 官方 UI 会随渲染重写 placeholder，观察器在每次改写后补回（scene 名牌变化也同步）。
+  // 上游 v0.1.2:官方输入席改为 contentEditable + 占位符元素 [data-composer-placeholder]
+  // (旧壳是 textarea[data-phase])。两种壳都适配;观察器在官方改写后补回(scene 名牌变化同步)。
   const syncOfficialPlaceholder = () => {
     const name = assistantDisplayName(sceneSource.getSnapshot())
     const text = '你想和' + name + '说什么呢？'
     for (const input of document.querySelectorAll('textarea[data-phase]')) {
       if (input.getAttribute('placeholder') !== text) input.setAttribute('placeholder', text)
     }
+    for (const el of document.querySelectorAll('[data-composer-placeholder]')) {
+      if (el.textContent !== text) el.textContent = text
+    }
+    for (const el of document.querySelectorAll('[contenteditable="true"][data-placeholder]')) {
+      if (el.getAttribute('data-placeholder') !== text) el.setAttribute('data-placeholder', text)
+    }
   }
   syncOfficialPlaceholder()
   const placeholderObserver = new MutationObserver((records) => {
     const touched = records.some(record => record.type === 'childList')
       || records.some(record => record.type === 'attributes' && record.attributeName === 'placeholder')
+      || records.some(record => record.type === 'attributes' && record.attributeName === 'data-placeholder')
     if (touched) syncOfficialPlaceholder()
   })
-  placeholderObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['placeholder'] })
+  placeholderObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['placeholder', 'data-placeholder'] })
   const offScenePlaceholder = sceneSource.subscribe(syncOfficialPlaceholder)
   ctx.effect(() => () => { placeholderObserver.disconnect(); offScenePlaceholder() }, 'gal-view: official placeholder')
 

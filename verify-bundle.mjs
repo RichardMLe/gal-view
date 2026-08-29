@@ -307,9 +307,10 @@ try {
   console.log('zip pair ok')
 
   // —— 孤儿 zip:只有 zip 没有 md → 计入无法识别 ——
+  listCurrent = 's-root'
   fakeFiles.set('深海脑-save99.zip', { kind: 'file', content: 'PK' })
   const orphanList = await registeredApi.listFileSlots()
-  if (!orphanList.broken.some(b => String(b).includes('深海脑-save99.zip'))) { console.error('FAIL orphan zip not flagged: ' + JSON.stringify(orphanList.broken)); process.exit(1) }
+  if (!orphanList.broken.some(b => String(b).includes('深海脑-save99.zip'))) { console.error('FAIL orphan zip not flagged: ' + JSON.stringify(orphanList) + ' mainTitle=' + JSON.stringify(registeredApi.mainTitle())); process.exit(1) }
   fakeFiles.delete('深海脑-save99.zip')
   console.log('orphan zip ok')
 

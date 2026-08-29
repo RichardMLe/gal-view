@@ -19,18 +19,6 @@ const STATUS_DWELL_MS = 1500
 /** 模型状态迟迟未到时的兜底等待上限（超过后按当前状态翻页）。 */
 const STATUS_MAX_WAIT_MS = 6000
 
-/** 发送玩家输入：走宿主输入机（adjudication/claim/默认 sink 同一管线）。
- * 草稿与会话输入机共享：GAL 与「对话」栏同一草稿，切换标签页不丢。 */
-function useSend(inputActions, draft, clearDraft) {
-  return useCallback(() => {
-    const text = draft.trim()
-    if (text === '') return
-    inputActions.setDraft(text)
-    inputActions.submit()
-    clearDraft()
-  }, [draft, inputActions, clearDraft])
-}
-
 /** 对话历史面板（右侧滑出）。 */
 function HistoryPanel({ scene, lines, onClose }) {
   const listRef = useRef(null)
@@ -213,12 +201,13 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setPicking(true)
     setError(null)
     try {
-      // 系统标准目录选择框(showDirectoryPicker),仅当未授权/权限过期时弹出。
+      // 「选择/重新选择存档文件夹」按钮:强制弹系统标准目录选择框
+      // (force=true 跳过已授权复用——按钮语义就是重选,否则按钮形同虚设)。
       if (typeof api?.prepareSaveDir === 'function') {
-        const prep = await api.prepareSaveDir()
+        const prep = await api.prepareSaveDir({ force: true })
         if (prep.status === 'cancelled') setNotice('已取消选择')
         else if (prep.status === 'unsupported') setError('当前浏览器不支持文件夹写入，存档将改为下载到「下载」文件夹')
-        else setNotice(prep.status === 'picked' ? '已选择存档文件夹' : '存档文件夹已就绪')
+        else setNotice('已选择存档文件夹')
       } else if (typeof api?.ensureSaveDir === 'function') {
         const ok = await api.ensureSaveDir()
         if (!ok) setNotice('已取消选择')
@@ -624,9 +613,6 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
   // 无 useInput/inputActions 的独立挂载环境（冒烟测试）回退到本地状态。
   const inputDraft = typeof useInput === 'function' ? useInput(s => s.draft) : undefined
   const [localDraft, setLocalDraft] = useState('')
-  // 输入法组合期标记:组合期间输入框只走本地值,不写回官方草稿(IME 保护)。
-  const [composing, setComposing] = useState(false)
-  const draft = typeof inputDraft === 'string' ? inputDraft : localDraft
   const setSharedDraft = useCallback((text) => {
     if (inputActions !== null && inputActions !== undefined && typeof inputActions.setDraft === 'function') inputActions.setDraft(text)
     else setLocalDraft(text)
@@ -1027,7 +1013,29 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
       setPageIndex(pageIndex + 1)
     }
   }, [running, type.done, hasNextPage, pageIndex, skipTyping])
-  const send = useSend(inputActions, draft, () => setSharedDraft(''))
+  // 输入框采用「本地非受控」模式(与官方对话栏同思路):React 不重写 DOM value,
+  // IME/光标完全交给浏览器;仅挂载初始化、未聚焦时同步官方草稿、卸载时写回。
+  const inputRef = useRef(null)
+  useEffect(() => {
+    const el = inputRef.current
+    if (el !== null && typeof inputDraft === 'string' && el.value !== inputDraft && document.activeElement !== el) {
+      el.value = inputDraft
+      setLocalDraft(inputDraft)
+    }
+  }, [inputDraft])
+  useEffect(() => () => {
+    const el = inputRef.current
+    if (el !== null && typeof inputActions?.setDraft === 'function') inputActions.setDraft(el.value)
+  }, [inputActions])
+  const send = useCallback(() => {
+    const el = inputRef.current
+    const text = el !== null ? el.value.trim() : ''
+    if (text === '') return
+    if (typeof inputActions?.setDraft === 'function') inputActions.setDraft(text)
+    if (typeof inputActions?.submit === 'function') inputActions.submit()
+    if (el !== null) el.value = ''
+    setLocalDraft('')
+  }, [inputActions])
 
   // ---- 文件式存档/读档 ----
   // 手动存档:手势内备目录 → 轻量落定 → 待处理清空 → api.performFileSave(history 转写+zip 导出+守卫+互斥)。
@@ -1202,7 +1210,7 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
           {/* 决策面板：等待批准/回答时浮于舞台上方，直接作答，无需切回「对话」栏。
               提问期间底部输入行隐藏（作答全部发生在面板的选项列表与输入组合框内）。
               输入行始终挂载（仅 visibility 隐藏）：舞台区布局零变化，不分页缩放/闪烁。 */}
-          <PendingPanel pending={pending} draft={draft} setSharedDraft={setSharedDraft} onControl={setQuestionControl} />
+          <PendingPanel pending={pending} onControl={setQuestionControl} />
           <form
             className={'gv-input' + (questionControl !== null ? ' is-hidden' : '')}
             onSubmit={e => {
@@ -1212,18 +1220,9 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
           >
             <textarea
               className="gv-input-box"
-              value={composing ? localDraft : draft}
-              onChange={e => {
-                // 输入法组合期(微软拼音等)只更新本地显示值,不写回官方草稿:
-                // 官方草稿回环会在组合期重写 DOM value,打断 IME → 只能输入一个字母。
-                if (composing) setLocalDraft(e.target.value)
-                else setSharedDraft(e.target.value)
-              }}
-              onCompositionStart={() => setComposing(true)}
-              onCompositionEnd={e => {
-                setComposing(false)
-                setSharedDraft(e.target.value)
-              }}
+              ref={inputRef}
+              defaultValue=""
+              onChange={e => setLocalDraft(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
@@ -1234,7 +1233,7 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
               rows={2}
               aria-label="玩家输入"
             />
-            <button type="submit" className="gv-btn gv-btn-accent gv-send" disabled={draft.trim() === ''}>
+            <button type="submit" className="gv-btn gv-btn-accent gv-send" disabled={localDraft.trim() === ''}>
               发送
             </button>
           </form>

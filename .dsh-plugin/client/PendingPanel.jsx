@@ -8,7 +8,7 @@
  * - 背景虚化轻；选项框边框取「设置」按钮气质（细亮边 + 深色玻璃）。
  */
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   approvalEnvelope, questionAnswerEnvelope, questionCancelEnvelope,
   emptyDrafts, draftAnswered, draftsComplete, buildAnswers, pendingItems,
@@ -96,11 +96,17 @@ function ApprovalCard({ wait }) {
  * 单选自动进入下一题；多选显示「下一题」；「算了 / 先跳过」与选项并列。
  * 提交入口经 onControl 交给 GalView 的输入框按钮。
  */
-function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, localAnswer, setComposing, setLocalAnswer }) {
+function QuestionCard({ wait, onControl }) {
   const questions = Array.isArray(wait.payload.questions) ? wait.payload.questions : []
   const [flow, setFlow] = useState(() => ({ index: 0, states: emptyDrafts(questions) }))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // 作答框本地非受控(与官方对话栏同思路):React 不重写 value,IME/光标交给浏览器。
+  const answerRef = useRef(null)
+  const answerText = () => (answerRef.current !== null ? answerRef.current.value : '')
+  const clearAnswer = () => {
+    if (answerRef.current !== null) answerRef.current.value = ''
+  }
   const index = flow.index
   const states = flow.states
   const question = questions[index]
@@ -119,18 +125,20 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, local
 
   /** 进入下一题：把输入框里的自定义回答固化为本题答案，并清空输入框。 */
   const advance = (nextIndex) => {
+    const text = answerText()
     setFlow(cur => {
       const states = cur.states.map((s, i) => {
         if (i !== cur.index) return s
-        return draft.trim() !== '' ? { ...s, custom: draft, skipped: false } : s
+        return text.trim() !== '' ? { ...s, custom: text, skipped: false } : s
       })
       return { index: nextIndex, states }
     })
-    if (draft.trim() !== '') setSharedDraft('')
+    clearAnswer()
     setError(null)
   }
 
   const choose = (label) => {
+    const text = answerText()
     if (multi) {
       setFlow(cur => ({
         ...cur,
@@ -144,25 +152,25 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, local
     // 单选：非末题快照草稿并自动进入下一题；末题直接提交（galgame 点击即答）。
     const nextStates = states.map((s, i) => (i === index ? { ...s, selected: [label], skipped: false } : s))
     if (notLast) {
-      const withCustom = nextStates.map((s, i) => (i === index && draft.trim() !== '' ? { ...s, custom: draft } : s))
+      const withCustom = nextStates.map((s, i) => (i === index && text.trim() !== '' ? { ...s, custom: text } : s))
       setFlow({ index: index + 1, states: withCustom })
-      if (draft.trim() !== '') setSharedDraft('')
+      clearAnswer()
       setError(null)
       return
     }
     setFlow({ index, states: nextStates })
     setError(null)
-    if (draft.trim() === '') respondWith(nextStates)
+    if (text.trim() === '') respondWith(nextStates)
   }
 
   const skip = () => {
     setCurrent({ selected: [], custom: '', skipped: true })
-    setSharedDraft('')
+    clearAnswer()
     if (notLast) advance(index + 1)
   }
 
   const next = () => {
-    const answered = draftAnswered(states[index]) || draft.trim() !== ''
+    const answered = draftAnswered(states[index]) || answerText().trim() !== ''
     if (!answered) {
       setError('请先回答本题')
       return
@@ -185,12 +193,13 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, local
   }, [busy, questions, wait])
 
   const submit = useCallback(() => {
-    const finalStates = draft.trim() !== ''
-      ? states.map((s, i) => (i === index ? { ...s, custom: draft, skipped: false } : s))
+    const text = answerText()
+    const finalStates = text.trim() !== ''
+      ? states.map((s, i) => (i === index ? { ...s, custom: text, skipped: false } : s))
       : states
     respondWith(finalStates)
-    if (draft.trim() !== '') setSharedDraft('')
-  }, [draft, states, index, respondWith, setSharedDraft])
+    clearAnswer()
+  }, [states, index, respondWith])
 
   const cancel = () => {
     if (busy) return
@@ -248,17 +257,9 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, local
             className="gv-pending-answer-input"
             rows={1}
             placeholder="或输入你的回答……"
-            value={composing ? localAnswer : draft}
+            ref={answerRef}
+            defaultValue=""
             disabled={busy}
-            onChange={(e) => {
-              if (composing) setLocalAnswer(e.target.value)
-              else setSharedDraft(e.target.value)
-            }}
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={(e) => {
-              setComposing(false)
-              setSharedDraft(e.target.value)
-            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -281,10 +282,7 @@ function QuestionCard({ wait, draft, setSharedDraft, onControl, composing, local
 }
 
 /** 面板整体：无外层包裹框；批准与提问各渲染第一个；背景轻虚化。 */
-export function PendingPanel({ pending, draft, setSharedDraft, onControl }) {
-  // 输入法组合期保护:组合期间只走本地值,不写回官方草稿(否则 IME 只能输入一个字母)。
-  const [composing, setComposing] = useState(false)
-  const [localAnswer, setLocalAnswer] = useState('')
+export function PendingPanel({ pending, onControl }) {
   const items = pendingItems(pending)
   if (items.length === 0) return null
   const approval = items.find(wait => wait.kind === 'approval') ?? null
@@ -294,7 +292,7 @@ export function PendingPanel({ pending, draft, setSharedDraft, onControl }) {
       <div className="gv-pending-veil" aria-hidden="true" />
       <div className="gv-pending-stack">
         {approval !== null && <ApprovalCard key={approval.key} wait={approval} />}
-        {question !== null && <QuestionCard key={question.key} wait={question} draft={draft} setSharedDraft={setSharedDraft} onControl={onControl} composing={composing} localAnswer={localAnswer} setComposing={setComposing} setLocalAnswer={setLocalAnswer} />}
+        {question !== null && <QuestionCard key={question.key} wait={question} onControl={onControl} />}
       </div>
     </div>
   )
