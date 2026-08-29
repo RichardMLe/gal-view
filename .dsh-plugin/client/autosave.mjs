@@ -15,6 +15,8 @@
 // - 状态发布:statusSource 可观察源(设置面板显示"上次结果/下次还需几轮")。
 // 零 React 依赖,纯注入接口,可单测(heartbeatMs/throttleMsOf 可注入加速测试)。
 
+import { LS_KEYS } from './persist.mjs'
+
 /** 从会话列表快照取当前会话 id(与 index.mjs 的 sessionOf 同语义)。 */
 function sessionOf(snapshot) {
   if (snapshot === null || snapshot === undefined) return null
@@ -39,7 +41,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
   let retryTimer = null
   let retryAttempt = 0
 
-  const keyOf = id => 'gal-view:auto:' + String(id)
+  const keyOf = id => LS_KEYS.autoPrefix + ':' + String(id)
 
   const every = () => {
     const value = sceneSource !== null && sceneSource !== undefined && typeof sceneSource.getSnapshot === 'function'

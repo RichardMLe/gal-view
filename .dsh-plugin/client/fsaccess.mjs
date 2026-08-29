@@ -3,7 +3,9 @@
 // 不支持 FS Access API 的环境降级为浏览器下载(Downloads 目录),功能不崩。
 // 本模块只做 IO 胶水,零业务逻辑(业务在 savefile.mjs)。
 
-const IDB_NAME = 'gal-view-fs'
+import { IDB_NAMES } from './persist.mjs'
+
+const IDB_NAME = IDB_NAMES.fsDb
 const IDB_STORE = 'handles'
 const IDB_KEY = 'dir'
 const SAVES_DIR = '.gal-view-saves'

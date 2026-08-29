@@ -8,6 +8,7 @@ import { StageView } from './StageView.jsx'
 import { ELEMENT_TYPES, TYPE_LABELS, sortElements, makeElement } from './scene.mjs'
 import { BUILTIN_FONTS } from './fonts.mjs'
 import { normalizePersona, PERSONA_POOL_KEYS, PERSONA_POOL_LABELS, thinkingLine, toolLine } from './persona.mjs'
+import { LS_KEYS } from './persist.mjs'
 
 /** 树节点类型记号（纯 CSS 图形，不用 emoji）。 */
 function TypeGlyph({ type }) {
@@ -585,10 +586,9 @@ function PersonaPreview({ scene }) {
 }
 
 /** 边栏显隐偏好 + 设置条目隐藏偏好（localStorage；隐私模式/异常时用默认值）。 */
-const PANELS_KEY = 'gal-view:editor-panels'
 function loadPanels() {
   try {
-    const raw = window.localStorage.getItem(PANELS_KEY)
+    const raw = window.localStorage.getItem(LS_KEYS.editorPanels)
     if (raw === null) return { tree: true, props: true, hiddenSettings: { persona: false, options: false } }
     const parsed = JSON.parse(raw)
     return {
@@ -605,7 +605,7 @@ function loadPanels() {
 }
 function savePanels(panels) {
   try {
-    window.localStorage.setItem(PANELS_KEY, JSON.stringify(panels))
+    window.localStorage.setItem(LS_KEYS.editorPanels, JSON.stringify(panels))
   } catch {
     // 隐私模式/配额：忽略（偏好仅本次会话内有效）。
   }

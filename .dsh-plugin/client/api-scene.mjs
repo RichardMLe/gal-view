@@ -15,9 +15,10 @@ import {
   extOf, embedFonts, extractFonts,
 } from './fonts.mjs'
 import { loadJSON, saveJSON } from './store.mjs'
+import { LS_KEYS } from './persist.mjs'
 
-/** 场景持久化键(场景域常量,apply 初始化也用它)。 */
-export const PERSIST_KEY = 'gal-view:scene:v1'
+/** 场景持久化键(场景域常量,apply 初始化也用它;集中登记于 persist.mjs,附录 C)。 */
+export const PERSIST_KEY = LS_KEYS.scene
 
 /** 场景编辑工厂:返回与 createSceneApi 合并的 api 方法面。 */
 export function createSceneEditingApi({ sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase }) {

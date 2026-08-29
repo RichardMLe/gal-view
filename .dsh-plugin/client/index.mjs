@@ -32,6 +32,7 @@ import { createSceneEditingApi, PERSIST_KEY } from './api-scene.mjs'
 import { createFileSaveApi } from './api-file-save.mjs'
 import { createGlobalAutoSave } from './autosave.mjs'
 import { assistantDisplayName } from './transcript.mjs'
+import { LS_KEYS, SLOTS_VERSION } from './persist.mjs'
 // 默认预设场景：仓库根 gal-scene.json（编辑器导出的格式，内嵌被引用的素材/字体）。
 import presetScene from '../../gal-scene.json'
 
@@ -40,7 +41,6 @@ export const name = 'gal-view'
 /** 依赖服务：槽位系统（会话数据经槽位框架注入，无需直接消费 sessions）。 */
 export const inject = ['slots']
 
-const ENABLED_KEY = 'gal-view:enabled'
 const HISTORY_LIMIT = 100
 
 /**
@@ -52,7 +52,7 @@ function createReadStore() {
   return {
     spec: {
       init: () => ({ lineKey: null, pageIndex: 0, shown: '', done: true, dwellSince: null, statusHold: false }),
-      persist: 'gal-view.read',
+      persist: LS_KEYS.readPrefix,
       actions: {
         saveProgress: (draft, progress) => {
           draft.lineKey = progress.lineKey
@@ -66,8 +66,8 @@ function createReadStore() {
     },
     create(scopeKey) {
       const persistKey = scopeKey === undefined
-        ? 'gal-view.read'
-        : 'gal-view.read.' + String(scopeKey)
+        ? LS_KEYS.readPrefix
+        : LS_KEYS.readPrefix + '.' + String(scopeKey)
       let state = { lineKey: null, pageIndex: 0, shown: '', done: true, dwellSince: null, statusHold: false }
       try {
         const raw = window.localStorage.getItem(persistKey)
@@ -154,10 +154,10 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     /** 读/写槽位注册表（localStorage；归档后会话列表不可见，名录必须自持）。
      * 读取即过滤：自动存档仅保留最新一条（旧版本遗留的多条自动档在界面上直接消失，
-     * 不涉及任何物理删除）。 */
+     * 不涉及任何物理删除）。写带版本号（SLOTS_VERSION），读容错（旧数据无版本）。 */
     readSlotsRegistry() {
       try {
-        const raw = storage?.getItem?.(SLOTS_KEY) ?? null
+        const raw = storage?.getItem?.(LS_KEYS.slots) ?? null
         if (raw === null) return { rootTitle: '', saves: [], autos: [] }
         const parsed = JSON.parse(raw)
         const saves = Array.isArray(parsed.saves) ? parsed.saves : []
@@ -173,7 +173,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     writeSlotsRegistry(reg) {
       try {
-        storage?.setItem?.(SLOTS_KEY, JSON.stringify(reg))
+        storage?.setItem?.(LS_KEYS.slots, JSON.stringify({ ...reg, version: SLOTS_VERSION }))
       } catch {
         // 隐私模式/配额：忽略（名录仅本会话有效）。
       }
@@ -422,9 +422,6 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
   }
 }
 
-/** 槽位注册表键（localStorage）。 */
-const SLOTS_KEY = 'gal-view:slots'
-
 /** 标题是否像槽位名（xx-saveN / xx-自动N）——主线程标题不应取槽位名。 */
 function isSlotTitle(title) {
   return /-save\d+$/.test(title) || /-自动\d+$/.test(title)
@@ -586,10 +583,10 @@ export function apply(ctx) {
   ctx.effect(() => () => { placeholderObserver.disconnect(); offScenePlaceholder() }, 'gal-view: official placeholder')
 
   // 插件开关：设置选项卡控制会话页「GAL视窗」标签的显隐。
-  const enabledSource = createObservable(loadJSON(storage, ENABLED_KEY) !== false)
+  const enabledSource = createObservable(loadJSON(storage, LS_KEYS.enabled) !== false)
   const setEnabled = value => {
     enabledSource.update(value === true)
-    saveJSON(storage, ENABLED_KEY, value === true)
+    saveJSON(storage, LS_KEYS.enabled, value === true)
   }
 
   ctx.effect(() => () => { styleEl.remove(); fontStyleEl.remove() }, 'gal-view: styles')

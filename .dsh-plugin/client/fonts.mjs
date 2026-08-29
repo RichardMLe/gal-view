@@ -4,6 +4,7 @@
 
 import { makeId } from './scene.mjs'
 import { createIdbStore } from './store.mjs'
+import { IDB_NAMES } from './persist.mjs'
 
 /** 单字体文件大小上限（dataURL 开销考虑；CJK 字体可能较大）。 */
 export const MAX_FONT_BYTES = 24 * 1024 * 1024
@@ -87,6 +88,6 @@ export function extractFonts(raw) {
 }
 
 /** IndexedDB 字体库驱动（store 'fonts'；内存镜像 + 异步落库，不可用时纯内存）。 */
-export function createIdbFonts(dbName = 'gal-view') {
-  return createIdbStore(dbName, 'fonts')
+export function createIdbFonts(dbName = IDB_NAMES.fontsDb) {
+  return createIdbStore(dbName, IDB_NAMES.fontsStore)
 }

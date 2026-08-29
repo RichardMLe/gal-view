@@ -4,6 +4,7 @@
 
 import { makeId } from './scene.mjs'
 import { createIdbStore } from './store.mjs'
+import { IDB_NAMES } from './persist.mjs'
 
 /** 接受的图片类型（文件 import 校验 + dataURL 校验共用）。 */
 export const ASSET_MIME = /^image\/(png|jpe?g|webp|gif)$/i
@@ -69,6 +70,6 @@ export function extractAssets(raw) {
 }
 
 /** IndexedDB 驱动：内存镜像 + 异步落库；indexedDB 不可用时退化为纯内存（不持久）。 */
-export function createIdbAssets(dbName = 'gal-view') {
-  return createIdbStore(dbName, 'assets')
+export function createIdbAssets(dbName = IDB_NAMES.assetsDb) {
+  return createIdbStore(dbName, IDB_NAMES.assetsStore)
 }

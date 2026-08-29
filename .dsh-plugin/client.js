@@ -2800,6 +2800,53 @@ function createIdbStore(dbName, storeName) {
   };
 }
 
+// .dsh-plugin/client/persist.mjs
+var LS_KEYS = Object.freeze({
+  /** 槽位注册表(旧式会话槽)。数据实为工程级,key 机器级——已知债 C3,面板按前缀过滤。 */
+  slots: "gal-view:slots",
+  /** 场景设置。数据实为工程级,单 key 跨工程共享——已知债 C3。 */
+  scene: "gal-view:scene:v1",
+  /** 插件开关(机器级)。 */
+  enabled: "gal-view:enabled",
+  /** 编辑器面板偏好(机器级)。 */
+  editorPanels: "gal-view:editor-panels",
+  /** 阅读进度前缀(会话级;key = <readPrefix> 或 <readPrefix>.<scopeKey>)。 */
+  readPrefix: "gal-view:read",
+  /** 自动存档基线前缀(会话级;key = <autoPrefix>:<sessionId>)。 */
+  autoPrefix: "gal-view:auto"
+});
+var IDB_NAMES = Object.freeze({
+  /** 素材库(机器级,表 assets;图片 dataURL 不进 localStorage)。 */
+  assetsDb: "gal-view",
+  assetsStore: "assets",
+  /** 字体库(机器级,表 fonts)。 */
+  fontsDb: "gal-view",
+  fontsStore: "fonts",
+  /** 存档目录授权句柄。实为工程级,现单键跨工程——已知债 C4,面板有 mismatch 提示。 */
+  fsDb: "gal-view-fs"
+});
+var PERSIST_LAYERS = Object.freeze({
+  machine: [
+    "LS_KEYS.enabled(\u63D2\u4EF6\u5F00\u5173)",
+    "LS_KEYS.editorPanels(\u7F16\u8F91\u5668\u9762\u677F\u504F\u597D)",
+    "IDB assets/fonts(\u7D20\u6750/\u5B57\u4F53\u5E93,\u8DE8\u5DE5\u7A0B\u5171\u4EAB)"
+  ],
+  project: [
+    "\u573A\u666F\u8BBE\u7F6E(\u5B9E\u4E3A\u5DE5\u7A0B\u7EA7;\u5F53\u524D\u5355 key\u2014\u2014\u503A C3)",
+    "\u69FD\u4F4D\u6CE8\u518C\u8868(\u5B9E\u4E3A\u5DE5\u7A0B\u7EA7;\u5F53\u524D\u5355 key\u2014\u2014\u503A C3)",
+    "\u5B58\u6863\u76EE\u5F55\u6388\u6743\u53E5\u67C4(\u5B9E\u4E3A\u5DE5\u7A0B\u7EA7;\u5F53\u524D\u5355\u53E5\u67C4\u2014\u2014\u503A C4)"
+  ],
+  session: [
+    "LS_KEYS.readPrefix.<scopeKey>(\u9605\u8BFB\u8FDB\u5EA6)",
+    "LS_KEYS.autoPrefix:<sessionId>(\u81EA\u52A8\u5B58\u6863\u57FA\u7EBF)"
+  ],
+  memory: [
+    "sceneSource/historySource/assetsSource/fontsSource \u7B49\u53EF\u89C2\u5BDF\u955C\u50CF",
+    "saveLocked(\u5B58\u6863\u4E92\u65A5\u9501)/viewSessionId(\u89C6\u56FE\u6CE8\u5165)/autoSaveSource(\u72B6\u6001\u53D1\u5E03)"
+  ]
+});
+var SLOTS_VERSION = 1;
+
 // .dsh-plugin/client/fonts.mjs
 var MAX_FONT_BYTES = 24 * 1024 * 1024;
 var FONT_FORMATS = Object.freeze({
@@ -2858,8 +2905,8 @@ function extractFonts(raw) {
   if (raw === null || typeof raw !== "object" || raw.fonts === null || typeof raw.fonts !== "object" || Array.isArray(raw.fonts)) return [];
   return Object.entries(raw.fonts).map(([, value]) => normalizeFont(value)).filter((record) => record !== null);
 }
-function createIdbFonts(dbName = "gal-view") {
-  return createIdbStore(dbName, "fonts");
+function createIdbFonts(dbName = IDB_NAMES.fontsDb) {
+  return createIdbStore(dbName, IDB_NAMES.fontsStore);
 }
 
 // .dsh-plugin/client/Editor.jsx
@@ -3258,10 +3305,9 @@ function PersonaPreview({ scene }) {
   const line2 = toolLine("\u6574\u7406\u6587\u4EF6", "preview-call", cfg);
   return /* @__PURE__ */ import_react2.default.createElement("div", { className: "gv-persona-preview", "aria-hidden": "true" }, /* @__PURE__ */ import_react2.default.createElement("span", { className: "gv-persona-preview-line gv-activity-reasoning" }, line1), /* @__PURE__ */ import_react2.default.createElement("span", { className: "gv-persona-preview-line gv-activity-tool" }, line2));
 }
-var PANELS_KEY = "gal-view:editor-panels";
 function loadPanels() {
   try {
-    const raw = window.localStorage.getItem(PANELS_KEY);
+    const raw = window.localStorage.getItem(LS_KEYS.editorPanels);
     if (raw === null) return { tree: true, props: true, hiddenSettings: { persona: false, options: false } };
     const parsed = JSON.parse(raw);
     return {
@@ -3278,7 +3324,7 @@ function loadPanels() {
 }
 function savePanels(panels) {
   try {
-    window.localStorage.setItem(PANELS_KEY, JSON.stringify(panels));
+    window.localStorage.setItem(LS_KEYS.editorPanels, JSON.stringify(panels));
   } catch {
   }
 }
@@ -5260,8 +5306,8 @@ function extractAssets(raw) {
   if (raw === null || typeof raw !== "object" || raw.assets === null || typeof raw.assets !== "object" || Array.isArray(raw.assets)) return [];
   return Object.entries(raw.assets).map(([, value]) => normalizeAsset(value)).filter((record) => record !== null);
 }
-function createIdbAssets(dbName = "gal-view") {
-  return createIdbStore(dbName, "assets");
+function createIdbAssets(dbName = IDB_NAMES.assetsDb) {
+  return createIdbStore(dbName, IDB_NAMES.assetsStore);
 }
 
 // .dsh-plugin/client/save.mjs
@@ -5530,7 +5576,7 @@ function isAncestorOf(byId, ancestorId, id) {
 }
 
 // .dsh-plugin/client/api-scene.mjs
-var PERSIST_KEY = "gal-view:scene:v1";
+var PERSIST_KEY = LS_KEYS.scene;
 function createSceneEditingApi({ sceneSource, history, historySource, storage, assetsSource, idb, fontsSource, fontIdb, seedPresetAssets, presetBase }) {
   const current = () => sceneSource.getSnapshot();
   const commit = (next) => {
@@ -5826,7 +5872,7 @@ function createSceneEditingApi({ sceneSource, history, historySource, storage, a
 }
 
 // .dsh-plugin/client/fsaccess.mjs
-var IDB_NAME = "gal-view-fs";
+var IDB_NAME = IDB_NAMES.fsDb;
 var IDB_STORE = "handles";
 var IDB_KEY = "dir";
 var SAVES_DIR = ".gal-view-saves";
@@ -6641,7 +6687,7 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
   let disposed = false;
   let retryTimer = null;
   let retryAttempt = 0;
-  const keyOf = (id) => "gal-view:auto:" + String(id);
+  const keyOf = (id) => LS_KEYS.autoPrefix + ":" + String(id);
   const every = () => {
     const value = sceneSource !== null && sceneSource !== void 0 && typeof sceneSource.getSnapshot === "function" ? sceneSource.getSnapshot()?.settings?.autoSaveEvery : void 0;
     return typeof value === "number" ? value : 10;
@@ -6883,13 +6929,12 @@ var gal_scene_default = { version: 1, settings: { stageW: 1920, stageH: 1080, sh
 // .dsh-plugin/client/index.mjs
 var name = "gal-view";
 var inject = ["slots"];
-var ENABLED_KEY = "gal-view:enabled";
 var HISTORY_LIMIT = 100;
 function createReadStore() {
   return {
     spec: {
       init: () => ({ lineKey: null, pageIndex: 0, shown: "", done: true, dwellSince: null, statusHold: false }),
-      persist: "gal-view.read",
+      persist: LS_KEYS.readPrefix,
       actions: {
         saveProgress: (draft, progress) => {
           draft.lineKey = progress.lineKey;
@@ -6902,7 +6947,7 @@ function createReadStore() {
       }
     },
     create(scopeKey) {
-      const persistKey = scopeKey === void 0 ? "gal-view.read" : "gal-view.read." + String(scopeKey);
+      const persistKey = scopeKey === void 0 ? LS_KEYS.readPrefix : LS_KEYS.readPrefix + "." + String(scopeKey);
       let state = { lineKey: null, pageIndex: 0, shown: "", done: true, dwellSince: null, statusHold: false };
       try {
         const raw = window.localStorage.getItem(persistKey);
@@ -6983,10 +7028,10 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     /** 读/写槽位注册表（localStorage；归档后会话列表不可见，名录必须自持）。
      * 读取即过滤：自动存档仅保留最新一条（旧版本遗留的多条自动档在界面上直接消失，
-     * 不涉及任何物理删除）。 */
+     * 不涉及任何物理删除）。写带版本号（SLOTS_VERSION），读容错（旧数据无版本）。 */
     readSlotsRegistry() {
       try {
-        const raw = storage?.getItem?.(SLOTS_KEY) ?? null;
+        const raw = storage?.getItem?.(LS_KEYS.slots) ?? null;
         if (raw === null) return { rootTitle: "", saves: [], autos: [] };
         const parsed = JSON.parse(raw);
         const saves = Array.isArray(parsed.saves) ? parsed.saves : [];
@@ -7002,7 +7047,7 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     },
     writeSlotsRegistry(reg) {
       try {
-        storage?.setItem?.(SLOTS_KEY, JSON.stringify(reg));
+        storage?.setItem?.(LS_KEYS.slots, JSON.stringify({ ...reg, version: SLOTS_VERSION }));
       } catch {
       }
     },
@@ -7235,7 +7280,6 @@ function createSceneApi(sceneSource, history, historySource, storage, assetsSour
     ...createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connectionSvc })
   };
 }
-var SLOTS_KEY = "gal-view:slots";
 function isSlotTitle(title) {
   return /-save\d+$/.test(title) || /-自动\d+$/.test(title);
 }
@@ -7361,10 +7405,10 @@ function apply(ctx) {
     placeholderObserver.disconnect();
     offScenePlaceholder();
   }, "gal-view: official placeholder");
-  const enabledSource = createObservable(loadJSON(storage, ENABLED_KEY) !== false);
+  const enabledSource = createObservable(loadJSON(storage, LS_KEYS.enabled) !== false);
   const setEnabled = (value) => {
     enabledSource.update(value === true);
-    saveJSON(storage, ENABLED_KEY, value === true);
+    saveJSON(storage, LS_KEYS.enabled, value === true);
   };
   ctx.effect(() => () => {
     styleEl.remove();
