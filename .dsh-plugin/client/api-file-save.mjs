@@ -306,12 +306,14 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
         clearTimeout(timer)
       }
     },
-    /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq, error }。
-     * 经宿主适配层 session/page(契约见 host-adapter.mjs);throughSeq 必须 ≤ 日志尾 seq。 */
+    /** 官方 history RPC 逐页后台拉取 → 完整转写
+     * { lines, turns, atSeq, forkSeq, error }。经宿主适配层 session/page
+     * (契约见 host-adapter.mjs);throughSeq 必须 ≤ 日志尾 seq。
+     * atSeq=窗口尾(完整性检查比对);forkSeq=最后 turn/end(存档/读档锚点,回合对齐)。 */
     async captureTranscript(sessionId) {
       const handle = connectionSvc
       if (handle === null || handle === undefined || typeof handle?.rpc?.call !== 'function') {
-        return { lines: [], turns: 0, atSeq: null, error: 'history 接口不可用(connection.rpc 缺失)' }
+        return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: 'history 接口不可用(connection.rpc 缺失)' }
       }
       // 当前尾 seq:会话绑定的事件窗口最后一条(窗口未打开时无)。
       let tailSeq = null
@@ -321,7 +323,7 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
       } catch {
         // 忽略:走下方显式报错
       }
-      if (tailSeq === null) return { lines: [], turns: 0, atSeq: null, error: '无法取得会话尾 seq(会话窗口未打开)' }
+      if (tailSeq === null) return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: '无法取得会话尾 seq(会话窗口未打开)' }
       const records = []
       let beforeSeq
       try {
@@ -344,10 +346,10 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
         }
       } catch (cause) {
         console.warn('[gal-view:save] captureTranscript 拉取失败:', cause)
-        return { lines: [], turns: 0, atSeq: null, error: String(cause?.message ?? cause) }
+        return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: String(cause?.message ?? cause) }
       }
       const result = wireEventsToLines(records)
-      return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, error: null }
+      return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, forkSeq: result.forkSeq, error: null }
     },
     /** 存档互斥锁(全局:自动存档与手动存档共用)。 */
     tryLockSave() {
@@ -384,7 +386,10 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
         if (transcript.error === null) {
           lines = transcript.lines
           turns = transcript.turns
-          atSeq = transcript.atSeq
+          // 存档点取回合对齐锚点 forkSeq(最后 turn/end):官方 fork 边界=「第一个
+          // seq ≥ atSeq 的 turn/end」,若用窗口尾(常落在回合后的自动标题等杂项
+          // 事件上),读档会把下一回合也算进来(存档 n 轮、读档 n+1 轮,8-30 实测)。
+          atSeq = typeof transcript.forkSeq === 'number' ? transcript.forkSeq : transcript.atSeq
         } else if (opts.fallbackLines !== null && opts.fallbackLines !== undefined) {
           lines = opts.fallbackLines.lines
           turns = opts.fallbackLines.turns

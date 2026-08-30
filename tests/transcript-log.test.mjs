@@ -45,7 +45,7 @@ test('lineFromWireEvent:user/steering → 玩家行,assistant → AI 行,工具�
   assert.equal(lineFromWireEvent({ type: 'user/message', surfaceOp: 'replace', seq: 7, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '被替换' }] } }), null)
 })
 
-test('wireEventsToLines:完整转写(行/总回合/存档点 seq)', () => {
+test('wireEventsToLines:完整转写(行/总回合/存档点 seq/回合对齐锚点 forkSeq)', () => {
   const events = [
     { event: { type: 'turn/start', seq: 10, data: { turn: 1 } } },
     { event: { type: 'user/message', surfaceOp: 'append', seq: 11, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第一问' }] } } },
@@ -58,6 +58,7 @@ test('wireEventsToLines:完整转写(行/总回合/存档点 seq)', () => {
   const result = wireEventsToLines(events)
   assert.equal(result.turns, 2)
   assert.equal(result.atSeq, 22)
+  assert.equal(result.forkSeq, 13, 'forkSeq 取最后 turn/end 的 seq')
   assert.deepEqual(result.lines, [
     { kind: 'player', text: '第一问' },
     { kind: 'assistant', text: '第一答' },
@@ -65,12 +66,29 @@ test('wireEventsToLines:完整转写(行/总回合/存档点 seq)', () => {
   ])
 })
 
+test('wireEventsToLines:回合后的杂项事件不污染存档锚点(8-30 n/n+1 回归)', () => {
+  // 官方 fork 边界=「第一个 seq ≥ atSeq 的 turn/end」:若锚点落在回合后的
+  // 自动标题等杂项事件上,读档会把下一回合也算进来。
+  const events = [
+    { event: { type: 'turn/start', seq: 1, data: { turn: 1 } } },
+    { event: { type: 'user/message', surfaceOp: 'append', seq: 2, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '问' }] } } },
+    { event: { type: 'assistant/message', surfaceOp: 'append', seq: 3, data: { message: { content: [{ type: 'text', text: '答' }] } } } },
+    { event: { type: 'turn/end', seq: 4, data: { turn: 1 } } },
+    { event: { type: 'session/title', seq: 7, data: { title: '自动标题' } } },
+  ]
+  const result = wireEventsToLines(events)
+  assert.equal(result.turns, 1)
+  assert.equal(result.atSeq, 7, '窗口尾=杂项事件 seq')
+  assert.equal(result.forkSeq, 4, '存档锚点=最后 turn/end seq(不被杂项事件污染)')
+})
+
 test('wireEventsToLines:空/垃圾输入安全', () => {
-  assert.deepEqual(wireEventsToLines(null), { lines: [], turns: 0, atSeq: null })
-  assert.deepEqual(wireEventsToLines([]), { lines: [], turns: 0, atSeq: null })
+  assert.deepEqual(wireEventsToLines(null), { lines: [], turns: 0, atSeq: null, forkSeq: null })
+  assert.deepEqual(wireEventsToLines([]), { lines: [], turns: 0, atSeq: null, forkSeq: null })
   const weird = wireEventsToLines([null, 42, { event: { type: 'x' } }])
   assert.equal(weird.lines.length, 0)
   assert.equal(weird.atSeq, null)
+  assert.equal(weird.forkSeq, null)
 })
 
 test('readHistoryResponse:官方真实契约 result.value.events(不是 result.events)', () => {

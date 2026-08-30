@@ -6133,15 +6133,17 @@ function wireEventsToLines(entries) {
   const lines = [];
   let turns = 0;
   let atSeq = null;
+  let forkSeq = null;
   for (const entry of Array.isArray(entries) ? entries : []) {
     const event = entry !== null && typeof entry === "object" && entry.event !== void 0 && entry.event !== null ? entry.event : entry;
     if (event === null || typeof event !== "object") continue;
     if (typeof event.seq === "number" && Number.isFinite(event.seq)) atSeq = event.seq;
     if (event.type === "turn/start") turns += 1;
+    if (event.type === "turn/end" && typeof event.seq === "number" && Number.isFinite(event.seq)) forkSeq = event.seq;
     const line = lineFromWireEvent(event);
     if (line !== null) lines.push(line);
   }
-  return { lines, turns, atSeq };
+  return { lines, turns, atSeq, forkSeq };
 }
 
 // .dsh-plugin/client/api-file-save.mjs
@@ -6417,12 +6419,14 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         clearTimeout(timer);
       }
     },
-    /** 官方 history RPC 逐页后台拉取 → 完整转写 { lines, turns, atSeq, error }。
-     * 经宿主适配层 session/page(契约见 host-adapter.mjs);throughSeq 必须 ≤ 日志尾 seq。 */
+    /** 官方 history RPC 逐页后台拉取 → 完整转写
+     * { lines, turns, atSeq, forkSeq, error }。经宿主适配层 session/page
+     * (契约见 host-adapter.mjs);throughSeq 必须 ≤ 日志尾 seq。
+     * atSeq=窗口尾(完整性检查比对);forkSeq=最后 turn/end(存档/读档锚点,回合对齐)。 */
     async captureTranscript(sessionId) {
       const handle = connectionSvc;
       if (handle === null || handle === void 0 || typeof handle?.rpc?.call !== "function") {
-        return { lines: [], turns: 0, atSeq: null, error: "history \u63A5\u53E3\u4E0D\u53EF\u7528(connection.rpc \u7F3A\u5931)" };
+        return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: "history \u63A5\u53E3\u4E0D\u53EF\u7528(connection.rpc \u7F3A\u5931)" };
       }
       let tailSeq = null;
       try {
@@ -6430,7 +6434,7 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         tailSeq = windowTailSeqFromEntries(eventSource?.getSnapshot?.()?.entries ?? null);
       } catch {
       }
-      if (tailSeq === null) return { lines: [], turns: 0, atSeq: null, error: "\u65E0\u6CD5\u53D6\u5F97\u4F1A\u8BDD\u5C3E seq(\u4F1A\u8BDD\u7A97\u53E3\u672A\u6253\u5F00)" };
+      if (tailSeq === null) return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: "\u65E0\u6CD5\u53D6\u5F97\u4F1A\u8BDD\u5C3E seq(\u4F1A\u8BDD\u7A97\u53E3\u672A\u6253\u5F00)" };
       const records = [];
       let beforeSeq;
       try {
@@ -6453,10 +6457,10 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         }
       } catch (cause) {
         console.warn("[gal-view:save] captureTranscript \u62C9\u53D6\u5931\u8D25:", cause);
-        return { lines: [], turns: 0, atSeq: null, error: String(cause?.message ?? cause) };
+        return { lines: [], turns: 0, atSeq: null, forkSeq: null, error: String(cause?.message ?? cause) };
       }
       const result = wireEventsToLines(records);
-      return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, error: null };
+      return { lines: result.lines, turns: result.turns, atSeq: result.atSeq, forkSeq: result.forkSeq, error: null };
     },
     /** 存档互斥锁(全局:自动存档与手动存档共用)。 */
     tryLockSave() {
@@ -6493,7 +6497,7 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         if (transcript.error === null) {
           lines = transcript.lines;
           turns = transcript.turns;
-          atSeq = transcript.atSeq;
+          atSeq = typeof transcript.forkSeq === "number" ? transcript.forkSeq : transcript.atSeq;
         } else if (opts.fallbackLines !== null && opts.fallbackLines !== void 0) {
           lines = opts.fallbackLines.lines;
           turns = opts.fallbackLines.turns;

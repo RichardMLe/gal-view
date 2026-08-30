@@ -58,13 +58,19 @@ export function lineFromWireEvent(event) {
 }
 
 /**
- * 事件列表(history RPC 累积,含 {event} 或裸 event)→ { lines, turns, atSeq }。
- * turns = turn/start 计数(持久总回合数);atSeq = 最后一个事件 seq(存档锚点)。
+ * 事件列表(history RPC 累积,含 {event} 或裸 event)→ { lines, turns, atSeq, forkSeq }。
+ * turns = turn/start 计数(持久总回合数);
+ * atSeq = 最后一个事件 seq(窗口尾,供完整性检查比对);
+ * forkSeq = 最后一个 turn/end 的 seq(存档/读档锚点)。官方 fork 的边界语义是
+ * 「第一个 seq ≥ atSeq 的 turn/end」,即向上取整到包含 atSeq 的回合结尾——若 atSeq
+ * 落在回合后的杂项事件(自动标题等)上,读档会把下一回合也算进来(存档显示 n 轮、
+ * 读档显示 n+1 轮,8-30 实测)。锚点必须对齐 turn/end。
  */
 export function wireEventsToLines(entries) {
   const lines = []
   let turns = 0
   let atSeq = null
+  let forkSeq = null
   for (const entry of Array.isArray(entries) ? entries : []) {
     const event = entry !== null && typeof entry === 'object' && entry.event !== undefined && entry.event !== null
       ? entry.event
@@ -72,10 +78,11 @@ export function wireEventsToLines(entries) {
     if (event === null || typeof event !== 'object') continue
     if (typeof event.seq === 'number' && Number.isFinite(event.seq)) atSeq = event.seq
     if (event.type === 'turn/start') turns += 1
+    if (event.type === 'turn/end' && typeof event.seq === 'number' && Number.isFinite(event.seq)) forkSeq = event.seq
     const line = lineFromWireEvent(event)
     if (line !== null) lines.push(line)
   }
-  return { lines, turns, atSeq }
+  return { lines, turns, atSeq, forkSeq }
 }
 
 /**

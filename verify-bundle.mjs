@@ -129,7 +129,9 @@ const workspacesMock = {
 let openCalls = []
 let archiveCalls = []
 let resyncCalls = []
-let windowTailSeq = 60
+// 窗口尾=61:第 15 轮 turn/end(60)之后有一条回合后杂项事件(自动标题,seq 61),
+// 复现 8-30「存档 n 轮、读档 n+1 轮」场景——存档点必须取 forkSeq(60)而非窗口尾(61)。
+let windowTailSeq = 61
 
 // —— 官方 history RPC 假数据(s-root:15 轮完整事件,共 60 条,分页拉取)——
 const fakeWireEvents = []
@@ -141,6 +143,9 @@ for (let t = 1; t <= 15; t++) {
   fakeWireEvents.push({ type: 'assistant/message', surfaceOp: 'append', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '第' + t + '答' }] } } })
   fakeWireEvents.push({ type: 'turn/end', seq: ++wireSeq, time: 1700000000000 + wireSeq, data: { turn: t } })
 }
+// 回合后的杂项事件:官方 fork 边界=「第一个 seq ≥ atSeq 的 turn/end」,锚点落在
+// 它上面会把下一回合算进读档(8-30 实测 n/n+1)——存档点必须回合对齐。
+fakeWireEvents.push({ type: 'session/title', seq: 61, time: 1700000000061, data: { title: '深海脑探案' } })
 // 上游 v0.1.2 @Remote 网关契约:rpc.call('/api','session/page',{args:{request:{address,throughSeq,beforeSeq?,maxMessages?}}})
 // → { ok:true, value:{ records:[{type:'event',event}], hasMore } };throughSeq 必须 ≤ 尾 seq。
 // 严格仿真 assertExactArguments(dsh-api-gateway):args 键必须精确等于描述符 wire 名
