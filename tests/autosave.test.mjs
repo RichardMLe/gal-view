@@ -37,6 +37,7 @@ function makeWorld({ autoSaveEvery = 1, withList = true } = {}) {
   let turns = 5
   let transcriptError = null
   let running = false
+  let busyOnce = false
   const saves = []
   const status = observable({ lastAt: null, lastResult: null, lastReason: '', turns: 0, baseline: 0, every: autoSaveEvery })
   const scene = observable({ settings: { autoSaveEvery } })
@@ -70,6 +71,10 @@ function makeWorld({ autoSaveEvery = 1, withList = true } = {}) {
       return { settled: ok, completed: true, aborted: false }
     },
     performFileSave: async (opts) => {
+      if (busyOnce) {
+        busyOnce = false
+        return { ok: false, reason: 'busy' }
+      }
       saves.push(opts)
       return { ok: true }
     },
@@ -78,6 +83,7 @@ function makeWorld({ autoSaveEvery = 1, withList = true } = {}) {
     setTurns: t => { turns = t },
     setRunning: r => { running = r },
     setError: e => { transcriptError = e },
+    setBusyOnce: () => { busyOnce = true },
     saves, status, scene, sessionsSvc, api,
     fireList: () => { for (const fn of [...listListeners]) fn() },
     fireBinding: () => { for (const fn of [...bindingListeners]) fn() },
@@ -134,6 +140,34 @@ test('心跳自愈:list 不可用(订阅错过服务挂载)→ 基线初始化�
     await sleep(500)
     assert.equal(world.status.getSnapshot().turns, 5)
     assert.equal(world.status.getSnapshot().baseline, 5)
+  } finally {
+    dispose()
+  }
+})
+
+test('互斥锁 busy 不产生同回合重复档(8-30 双档回归):busy 后重试结算且基线已更新', async () => {
+  const world = makeWorld()
+  const dispose = createGlobalAutoSave({
+    sessionsSvc: world.sessionsSvc, api: world.api,
+    sceneSource: world.scene, statusSource: world.status,
+    heartbeatMs: 200, throttleMsOf: () => 120,
+  })
+  try {
+    await sleep(160)
+    assert.equal(world.status.getSnapshot().turns, 5)
+    world.setTurns(6)
+    world.setRunning(true)
+    world.fireList()
+    await sleep(40)
+    assert.equal(world.saves.length, 0)
+    // 回合结束:首次 performFileSave 撞互斥锁(busy),必须重试结算而非丢弃——
+    // 旧实现 busy 不更新基线,锁释放后同回合被再存一遍(自动2/自动3 双档)。
+    world.setBusyOnce()
+    world.setRunning(false)
+    world.fireList()
+    await sleep(2400)
+    assert.equal(world.saves.length, 1, 'busy 后重试恰好保存一次,不产生重复档')
+    assert.equal(world.status.getSnapshot().lastResult, 'ok')
   } finally {
     dispose()
   }

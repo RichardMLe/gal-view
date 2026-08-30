@@ -6814,7 +6814,11 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
       });
       if (!gate.settled) {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u56DE\u5408\u672A\u843D\u5B9A" });
-        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u56DE\u5408\u672A\u843D\u5B9A,\u8DF3\u8FC7\u672C\u8F6E(\u4E0B\u6B21\u7ED3\u7B97\u91CD\u8BD5)");
+        console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u56DE\u5408\u672A\u843D\u5B9A,\u8DF3\u8FC7\u672C\u8F6E(\u6709\u9650\u91CD\u8BD5\u8865\u6863)");
+        if (retryAttempt < 2) {
+          retryAttempt += 1;
+          scheduleRetry(4e3 * retryAttempt);
+        }
         return;
       }
       const result = await api.performFileSave({
@@ -6829,6 +6833,7 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
         }
       });
       if (result.ok) {
+        retryAttempt = 0;
         rec.baseline = turns;
         try {
           window.localStorage.setItem(keyOf(id), String(rec.baseline));
@@ -6836,6 +6841,8 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
         }
         publish({ lastAt: Date.now(), lastResult: "ok", lastReason: "", turns, baseline: rec.baseline, every: interval });
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + interval + " \u8F6E)");
+      } else if (result.reason === "busy") {
+        scheduleRetry(1500);
       } else {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: String(result.reason ?? "\u672A\u77E5") });
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u8DF3\u8FC7:", result.reason);

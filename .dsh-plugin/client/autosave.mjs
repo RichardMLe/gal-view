@@ -176,7 +176,14 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       })
       if (!gate.settled) {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '回合未落定' })
-        console.info('[gal-view] 自动存档:回合未落定,跳过本轮(下次结算重试)')
+        console.info('[gal-view] 自动存档:回合未落定,跳过本轮(有限重试补档)')
+        // 落定失败 = 会话还在动(新回合立刻开始/流式未停)。有限重试:安静下来后
+        // 本回合的档还能补上;不重试则只能等下一次事件,快速连续回合时会丢档
+        // (8-30 实测:四次测试仅一次落盘)。永久性落定失败由 runningOf 闸门兜底。
+        if (retryAttempt < 2) {
+          retryAttempt += 1
+          scheduleRetry(4000 * retryAttempt)
+        }
         return
       }
       const result = await api.performFileSave({
@@ -191,10 +198,15 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
         },
       })
       if (result.ok) {
+        retryAttempt = 0
         rec.baseline = turns
         try { window.localStorage.setItem(keyOf(id), String(rec.baseline)) } catch { /* 忽略 */ }
         publish({ lastAt: Date.now(), lastResult: 'ok', lastReason: '', turns, baseline: rec.baseline, every: interval })
         console.info('[gal-view] 自动存档完成(间隔 ' + interval + ' 轮)')
+      } else if (result.reason === 'busy') {
+        // 存档互斥锁被占(手动档进行中):重试而非丢弃——否则本回合不更新基线,
+        // 锁释放后被再次结算成同回合重复档(8-30 实测:test1 回合连写自动2/自动3)。
+        scheduleRetry(1500)
       } else {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: String(result.reason ?? '未知') })
         console.info('[gal-view] 自动存档跳过:', result.reason)
