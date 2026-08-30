@@ -60,6 +60,11 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     statusSource.update({ ...statusSource.getSnapshot(), ...patch })
   }
 
+  /** 决策日志:每个结算决策落一行到存档目录 dotfile(诊断回放用,见 appendAutosaveLog)。 */
+  const log = (line) => {
+    if (typeof api?.appendAutosaveLog === 'function') void api.appendAutosaveLog(line)
+  }
+
   const readStoredBaseline = (id) => {
     try {
       const n = Number(window.localStorage.getItem(keyOf(id)))
@@ -139,7 +144,9 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
     if (typeof rec.lastCheckAt === 'number' && nowMs - rec.lastCheckAt < throttleMs) {
       // 节流拦截 ≠ 丢弃:回合结束时刻的 tick 常落在这里,而此后会话安静、不再有事件;
       // 安排延迟结算保证该回合的自动档最终被结算(见文件头注释的 8-29 事故)。
-      scheduleRetry(rec.lastCheckAt + throttleMs - nowMs + 80)
+      const delay = rec.lastCheckAt + throttleMs - nowMs + 80
+      scheduleRetry(delay)
+      log('节流拦截→延迟结算+' + Math.round(delay) + 'ms(turns=' + rec.turns + ',baseline=' + rec.baseline + ')')
       return
     }
     rec.lastCheckAt = nowMs
@@ -151,6 +158,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       const turns = transcript !== null && transcript !== undefined && transcript.error === null && typeof transcript.turns === 'number' ? transcript.turns : null
       if (turns === null) {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '无法读取会话记录' + (transcript !== null && transcript !== undefined && transcript.error !== null ? ':' + String(transcript.error) : '') })
+        log('转写失败:' + String(transcript !== null && transcript !== undefined ? transcript.error : '空') + '(retry=' + retryAttempt + ')')
         // 转写瞬时失败(事件窗口尚未就绪)有限重试;永久失败则等下次事件/心跳。
         if (retryAttempt < 2) {
           retryAttempt += 1
@@ -167,8 +175,14 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
         rec.baseline = turns
       }
       publish({ turns, baseline: rec.baseline, every: interval })
-      if (turns - rec.baseline < interval) return
-      if (runningOf(id)) return
+      if (turns - rec.baseline < interval) {
+        log('轮次未达(间隔' + interval + '):' + turns + '-' + rec.baseline)
+        return
+      }
+      if (runningOf(id)) {
+        log('运行中跳过(turns=' + turns + ')')
+        return
+      }
       const gate = await api.waitSettled({
         quietMs: 1500,
         timeoutMs: 30000,
@@ -177,6 +191,7 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
       if (!gate.settled) {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: '回合未落定' })
         console.info('[gal-view] 自动存档:回合未落定,跳过本轮(有限重试补档)')
+        log('回合未落定(retry=' + retryAttempt + ',turns=' + turns + ')')
         // 落定失败 = 会话还在动(新回合立刻开始/流式未停)。有限重试:安静下来后
         // 本回合的档还能补上;不重试则只能等下一次事件,快速连续回合时会丢档
         // (8-30 实测:四次测试仅一次落盘)。永久性落定失败由 runningOf 闸门兜底。
@@ -202,17 +217,21 @@ export function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSour
         rec.baseline = turns
         try { window.localStorage.setItem(keyOf(id), String(rec.baseline)) } catch { /* 忽略 */ }
         publish({ lastAt: Date.now(), lastResult: 'ok', lastReason: '', turns, baseline: rec.baseline, every: interval })
+        log('已存档(turns=' + turns + ',baseline→' + rec.baseline + ')')
         console.info('[gal-view] 自动存档完成(间隔 ' + interval + ' 轮)')
       } else if (result.reason === 'busy') {
         // 存档互斥锁被占(手动档进行中):重试而非丢弃——否则本回合不更新基线,
         // 锁释放后被再次结算成同回合重复档(8-30 实测:test1 回合连写自动2/自动3)。
+        log('互斥锁占用,排1.5s重试(turns=' + turns + ')')
         scheduleRetry(1500)
       } else {
         publish({ lastAt: Date.now(), lastResult: 'skipped', lastReason: String(result.reason ?? '未知') })
+        log('跳过:' + String(result.reason ?? '未知') + '(turns=' + turns + ')')
         console.info('[gal-view] 自动存档跳过:', result.reason)
       }
     } catch (cause) {
       publish({ lastAt: Date.now(), lastResult: 'error', lastReason: String(cause?.message ?? cause) })
+      log('异常:' + String(cause?.message ?? cause))
       console.warn('[gal-view] 自动存档失败:', cause)
     } finally {
       rec.busy = false

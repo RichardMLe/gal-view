@@ -558,6 +558,26 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
     assistantName() {
       return assistantDisplayName(sceneSource.getSnapshot())
     },
+    /** 自动存档决策日志(诊断专用 dotfile,环形保留最近 60 行):
+     * 自动存档控制器的每个结算决策落一行(时间+结果+回合/基线),事后可直接
+     * 打开存档目录读回放,定位"哪一轮为什么没存"(8-30 四次测试一次未落盘的
+     * 事后取证缺口)。目录未授权时静默跳过;日志失败绝不影响存档。 */
+    async appendAutosaveLog(line) {
+      try {
+        const dir = await resolveSaveDir()
+        if (dir === null) return
+        const name = '.gal-autosave-log.txt'
+        const prev = await readSaveFile(dir, name)
+        const stamp = '[' + new Date().toISOString().slice(11, 19) + '] '
+        const kept = prev !== null && prev !== ''
+          ? prev.split('\n').filter(l => l.trim() !== '').slice(-59)
+          : []
+        kept.push(stamp + line)
+        await writeSaveFile(dir, name, kept.join('\n'))
+      } catch {
+        // 诊断失败不影响存档
+      }
+    },
     /** 对话栏完整性检查(操作后自动调用):官方窗口可能因瞬时序列断档被重装成
      * 不完整尾部(早前对话从「对话」栏消失)。
      * 上游 v0.1.2 加固:本函数**只记录、绝不干预**——新运行时自带 torn-tail

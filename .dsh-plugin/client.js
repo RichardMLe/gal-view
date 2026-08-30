@@ -6657,6 +6657,23 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
     assistantName() {
       return assistantDisplayName(sceneSource.getSnapshot());
     },
+    /** 自动存档决策日志(诊断专用 dotfile,环形保留最近 60 行):
+     * 自动存档控制器的每个结算决策落一行(时间+结果+回合/基线),事后可直接
+     * 打开存档目录读回放,定位"哪一轮为什么没存"(8-30 四次测试一次未落盘的
+     * 事后取证缺口)。目录未授权时静默跳过;日志失败绝不影响存档。 */
+    async appendAutosaveLog(line) {
+      try {
+        const dir = await resolveSaveDir();
+        if (dir === null) return;
+        const name2 = ".gal-autosave-log.txt";
+        const prev = await readSaveFile(dir, name2);
+        const stamp = "[" + (/* @__PURE__ */ new Date()).toISOString().slice(11, 19) + "] ";
+        const kept = prev !== null && prev !== "" ? prev.split("\n").filter((l) => l.trim() !== "").slice(-59) : [];
+        kept.push(stamp + line);
+        await writeSaveFile(dir, name2, kept.join("\n"));
+      } catch {
+      }
+    },
     /** 对话栏完整性检查(操作后自动调用):官方窗口可能因瞬时序列断档被重装成
      * 不完整尾部(早前对话从「对话」栏消失)。
      * 上游 v0.1.2 加固:本函数**只记录、绝不干预**——新运行时自带 torn-tail
@@ -6713,6 +6730,9 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
   const publish = (patch) => {
     if (statusSource === null || statusSource === void 0 || typeof statusSource.update !== "function") return;
     statusSource.update({ ...statusSource.getSnapshot(), ...patch });
+  };
+  const log = (line) => {
+    if (typeof api?.appendAutosaveLog === "function") void api.appendAutosaveLog(line);
   };
   const readStoredBaseline = (id) => {
     try {
@@ -6780,7 +6800,9 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
     const throttleMs = throttleFor(interval);
     const nowMs = Date.now();
     if (typeof rec.lastCheckAt === "number" && nowMs - rec.lastCheckAt < throttleMs) {
-      scheduleRetry(rec.lastCheckAt + throttleMs - nowMs + 80);
+      const delay = rec.lastCheckAt + throttleMs - nowMs + 80;
+      scheduleRetry(delay);
+      log("\u8282\u6D41\u62E6\u622A\u2192\u5EF6\u8FDF\u7ED3\u7B97+" + Math.round(delay) + "ms(turns=" + rec.turns + ",baseline=" + rec.baseline + ")");
       return;
     }
     rec.lastCheckAt = nowMs;
@@ -6790,6 +6812,7 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
       const turns = transcript !== null && transcript !== void 0 && transcript.error === null && typeof transcript.turns === "number" ? transcript.turns : null;
       if (turns === null) {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u8BB0\u5F55" + (transcript !== null && transcript !== void 0 && transcript.error !== null ? ":" + String(transcript.error) : "") });
+        log("\u8F6C\u5199\u5931\u8D25:" + String(transcript !== null && transcript !== void 0 ? transcript.error : "\u7A7A") + "(retry=" + retryAttempt + ")");
         if (retryAttempt < 2) {
           retryAttempt += 1;
           scheduleRetry(3e3 * retryAttempt);
@@ -6805,8 +6828,14 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
         rec.baseline = turns;
       }
       publish({ turns, baseline: rec.baseline, every: interval });
-      if (turns - rec.baseline < interval) return;
-      if (runningOf(id)) return;
+      if (turns - rec.baseline < interval) {
+        log("\u8F6E\u6B21\u672A\u8FBE(\u95F4\u9694" + interval + "):" + turns + "-" + rec.baseline);
+        return;
+      }
+      if (runningOf(id)) {
+        log("\u8FD0\u884C\u4E2D\u8DF3\u8FC7(turns=" + turns + ")");
+        return;
+      }
       const gate = await api.waitSettled({
         quietMs: 1500,
         timeoutMs: 3e4,
@@ -6815,6 +6844,7 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
       if (!gate.settled) {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: "\u56DE\u5408\u672A\u843D\u5B9A" });
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863:\u56DE\u5408\u672A\u843D\u5B9A,\u8DF3\u8FC7\u672C\u8F6E(\u6709\u9650\u91CD\u8BD5\u8865\u6863)");
+        log("\u56DE\u5408\u672A\u843D\u5B9A(retry=" + retryAttempt + ",turns=" + turns + ")");
         if (retryAttempt < 2) {
           retryAttempt += 1;
           scheduleRetry(4e3 * retryAttempt);
@@ -6840,15 +6870,19 @@ function createGlobalAutoSave({ sessionsSvc, api, sceneSource, statusSource, hea
         } catch {
         }
         publish({ lastAt: Date.now(), lastResult: "ok", lastReason: "", turns, baseline: rec.baseline, every: interval });
+        log("\u5DF2\u5B58\u6863(turns=" + turns + ",baseline\u2192" + rec.baseline + ")");
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u5B8C\u6210(\u95F4\u9694 " + interval + " \u8F6E)");
       } else if (result.reason === "busy") {
+        log("\u4E92\u65A5\u9501\u5360\u7528,\u63921.5s\u91CD\u8BD5(turns=" + turns + ")");
         scheduleRetry(1500);
       } else {
         publish({ lastAt: Date.now(), lastResult: "skipped", lastReason: String(result.reason ?? "\u672A\u77E5") });
+        log("\u8DF3\u8FC7:" + String(result.reason ?? "\u672A\u77E5") + "(turns=" + turns + ")");
         console.info("[gal-view] \u81EA\u52A8\u5B58\u6863\u8DF3\u8FC7:", result.reason);
       }
     } catch (cause) {
       publish({ lastAt: Date.now(), lastResult: "error", lastReason: String(cause?.message ?? cause) });
+      log("\u5F02\u5E38:" + String(cause?.message ?? cause));
       console.warn("[gal-view] \u81EA\u52A8\u5B58\u6863\u5931\u8D25:", cause);
     } finally {
       rec.busy = false;
