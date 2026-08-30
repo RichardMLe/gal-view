@@ -362,11 +362,14 @@ try {
   listCurrent = 's-root'
   const pfsAuto = await registeredApi.performFileSave({ auto: true, skipZip: true, guardCheck: async () => ({ sessionId: 's-root', turns: 15 }) })
   if (!pfsAuto.ok) { console.error('FAIL performFileSave skipZip: ' + JSON.stringify(pfsAuto)); process.exit(1) }
-  const pfsAutoText = String(fakeFiles.get(pfsAuto.id + '.md')?.content ?? '')
+  // 口径 B1 形状锁:成功载荷必须进 value(id/name/title/fallback),不摊平
+  // (摊平形状曾让 UI 读 result.value.fallback 报 TypeError,8-30 实测)。
+  if (pfsAuto.value === null || typeof pfsAuto.value !== 'object' || typeof pfsAuto.value.id !== 'string') { console.error('FAIL performFileSave value shape: ' + JSON.stringify(pfsAuto)); process.exit(1) }
+  const pfsAutoText = String(fakeFiles.get(pfsAuto.value.id + '.md')?.content ?? '')
   if (!pfsAutoText.includes('自动档为完整文本记录')) { console.error('FAIL skipZip note missing'); process.exit(1) }
   if (!pfsAutoText.includes('第15答')) { console.error('FAIL skipZip record incomplete'); process.exit(1) }
-  if (fakeFiles.has(pfsAuto.id + '.zip')) { console.error('FAIL skipZip must not write zip'); process.exit(1) }
-  console.log('skipZip ok:', pfsAuto.id)
+  if (fakeFiles.has(pfsAuto.value.id + '.zip')) { console.error('FAIL skipZip must not write zip'); process.exit(1) }
+  console.log('skipZip ok:', pfsAuto.value.id)
 
   // —— 对话栏完整性检查:上游 v0.1.2 起只记录、绝不干预(不 resync)——
   listCurrent = 's-root'

@@ -173,11 +173,21 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   const [editText, setEditText] = useState('')
   const [dirInfo, setDirInfo] = useState(null)
   const [migrating, setMigrating] = useState(null)
+  const retryRef = useRef(null)
   const refresh = useCallback(async () => {
     setLegacy(loadSaveIndex(api))
     if (typeof api?.listFileSlots !== 'function') { setIndex(null); return }
     try {
-      setIndex(await api.listFileSlots())
+      const listed = await api.listFileSlots()
+      setIndex(listed)
+      // 重启后 IndexedDB 目录句柄是异步加载:首刷可能 ready=false(8-30 面板"所有
+      // 存档消失"的根因)。就绪态下静默重试一次,避免误导性的"当前无存档"空态。
+      if (listed !== null && typeof listed === 'object' && listed.ready !== true && retryRef.current === null) {
+        retryRef.current = setTimeout(() => {
+          retryRef.current = null
+          void refresh()
+        }, 1200)
+      }
     } catch {
       setIndex(null)
     }
@@ -187,8 +197,12 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   }, [api])
   useEffect(() => {
     void refresh()
-    if (typeof api?.onSessions !== 'function') return
-    return api.onSessions(() => { void refresh() })
+    if (typeof api?.onSessions !== 'function') return undefined
+    const off = api.onSessions(() => { void refresh() })
+    return () => {
+      off()
+      if (retryRef.current !== null) { clearTimeout(retryRef.current); retryRef.current = null }
+    }
   }, [api, refresh])
   const busyRef = useRef(busy)
   busyRef.current = busy
@@ -430,13 +444,20 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
           </button>
         </div>
         <div className="gv-saves-list">
-          <div className="gv-saves-group">自动存档（文件）</div>
-          {index !== null && index.autos.length > 0
-            ? index.autos.map(renderFileSlot)
-            : <div className="gv-saves-empty gv-saves-auto-empty">当前无自动存档</div>}
-          <div className="gv-saves-group">手动存档（文件）</div>
-          {index !== null && index.saves.length === 0 && <div className="gv-saves-empty">还没有手动存档</div>}
-          {index !== null && index.saves.map(renderFileSlot)}
+          {index !== null && index.ready === false && (
+            <div className="gv-saves-empty">正在读取存档目录…</div>
+          )}
+          {index !== null && index.ready === true && (
+            <>
+              <div className="gv-saves-group">自动存档（文件）</div>
+              {index.autos.length > 0
+                ? index.autos.map(renderFileSlot)
+                : <div className="gv-saves-empty gv-saves-auto-empty">当前无自动存档</div>}
+              <div className="gv-saves-group">手动存档（文件）</div>
+              {index.saves.length === 0 && <div className="gv-saves-empty">还没有手动存档</div>}
+              {index.saves.map(renderFileSlot)}
+            </>
+          )}
           {index === null && <div className="gv-saves-empty">文件存档不可用（当前浏览器环境不支持）</div>}
           {hasLegacy && (
             <div className="gv-saves-group-row">
@@ -599,10 +620,6 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
   // 无 useInput/inputActions 的独立挂载环境（冒烟测试）回退到本地状态。
   const inputDraft = typeof useInput === 'function' ? useInput(s => s.draft) : undefined
   const [localDraft, setLocalDraft] = useState('')
-  const setSharedDraft = useCallback((text) => {
-    if (inputActions !== null && inputActions !== undefined && typeof inputActions.setDraft === 'function') inputActions.setDraft(text)
-    else setLocalDraft(text)
-  }, [inputActions])
   const [type, setType] = useState(createTypeState)
   const [pages, setPages] = useState([])
   const [pageIndex, setPageIndex] = useState(0)
@@ -1071,15 +1088,16 @@ export function GalView({ useSession, useInput, inputActions, useChat, useScene,
     if (typeof api?.loadSaveFile !== 'function') throw new Error('当前环境不支持文件读档')
     return api.loadSaveFile(id)
   }, [api])
-  // 读档结果落地:fork 模式新会话自带真实历史;inject 回退渲染记录行并把记录放进草稿。
+  // 读档结果落地:fork 模式新会话自带真实历史;inject 回退仅经 restoredLines 在
+  // GAL 内展示记录行。8-30 冻结事故:不再把整段转写灌进输入框草稿——官方新版
+  // composer(contentEditable+autosize)对十几万字符的草稿同步会把整个界面卡死。
   const handleLoaded = useCallback((result) => {
     if (result !== null && typeof result === 'object' && result.mode === 'inject' && Array.isArray(result.lines)) {
       setRestoredLines(result.lines)
-      if (typeof result.recordText === 'string' && result.recordText !== '') setSharedDraft(result.recordText)
     } else {
       setRestoredLines(null)
     }
-  }, [setSharedDraft])
+  }, [])
 
   // 透明功能按钮：历史/自动/快进/设置/存档/读档（原底部控制栏已移除，功能由场景内按钮承载）。
   // 动作名归一化（容忍常见别名/中文），点击即分发。

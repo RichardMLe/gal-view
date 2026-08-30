@@ -4453,6 +4453,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   const [editText, setEditText] = (0, import_react4.useState)("");
   const [dirInfo, setDirInfo] = (0, import_react4.useState)(null);
   const [migrating, setMigrating] = (0, import_react4.useState)(null);
+  const retryRef = (0, import_react4.useRef)(null);
   const refresh = (0, import_react4.useCallback)(async () => {
     setLegacy(loadSaveIndex(api));
     if (typeof api?.listFileSlots !== "function") {
@@ -4460,7 +4461,14 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
       return;
     }
     try {
-      setIndex(await api.listFileSlots());
+      const listed = await api.listFileSlots();
+      setIndex(listed);
+      if (listed !== null && typeof listed === "object" && listed.ready !== true && retryRef.current === null) {
+        retryRef.current = setTimeout(() => {
+          retryRef.current = null;
+          void refresh();
+        }, 1200);
+      }
     } catch {
       setIndex(null);
     }
@@ -4474,10 +4482,17 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
   }, [api]);
   (0, import_react4.useEffect)(() => {
     void refresh();
-    if (typeof api?.onSessions !== "function") return;
-    return api.onSessions(() => {
+    if (typeof api?.onSessions !== "function") return void 0;
+    const off = api.onSessions(() => {
       void refresh();
     });
+    return () => {
+      off();
+      if (retryRef.current !== null) {
+        clearTimeout(retryRef.current);
+        retryRef.current = null;
+      }
+    };
   }, [api, refresh]);
   const busyRef = (0, import_react4.useRef)(busy);
   busyRef.current = busy;
@@ -4688,7 +4703,7 @@ function SavePanel({ api, mode, onClose, running, onRequestSave, onLoaded }) {
     setBusy(false);
   };
   const hasLegacy = legacy.saves.length > 0 || legacy.autos.length > 0;
-  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirInfo !== null && dirInfo.authorized === true ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A" + (dirInfo.projectPath !== "" ? String(dirInfo.projectPath).replace(/[\\/]+$/, "") + "\\.gal-view-saves" : "\u5DE5\u7A0B .gal-view-saves") : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u6388\u6743" + (dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08\u5DE5\u7A0B\u8DEF\u5F84\uFF1A" + dirInfo.projectPath + "\uFF09" : ""), dirInfo !== null && dirInfo.mismatch === true ? " \xB7 \u6CE8\u610F\uFF1A\u6388\u6743\u76EE\u5F55\u4E0E\u5F53\u524D\u5DE5\u7A0B\u4E0D\u4E00\u81F4" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirInfo !== null && dirInfo.authorized === true ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index !== null && index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index !== null && index.saves.map(renderFileSlot), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group-row" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF09"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: migrate }, "\u8F6C\u5316\u4E3A\u65B0\u5F0F\u5B58\u6863")), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false), migrating !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, "\u8FC1\u79FB\u4E2D ", migrating.done, "/", migrating.total, "\u2026\uFF08\u671F\u95F4\u4E0D\u53EF\u64CD\u4F5C\uFF09"), brokenCount > 0 && index !== null && Array.isArray(index.broken) && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken" }, /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-broken-title" }, brokenCount, " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B\uFF08\u4E0D\u662F\u6709\u6548\u7684\u5B58\u6863\u6587\u4EF6\uFF0C\u5DF2\u8DF3\u8FC7\uFF09\uFF1A"), index.broken.map((name2) => /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken-row", key: String(name2) }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-broken-name" }, String(name2)), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: () => removeBroken(name2) }, "\u5220\u9664"))))), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
+  return /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-layer", role: "dialog", "aria-label": mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves" }, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-head" }, /* @__PURE__ */ import_react4.default.createElement("span", null, mode === "save" ? "\u5B58\u6863" : "\u8BFB\u6863"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: onClose }, "\u5173\u95ED")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-dir" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-dir-label" }, dirInfo !== null && dirInfo.authorized === true ? "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A" + (dirInfo.projectPath !== "" ? String(dirInfo.projectPath).replace(/[\\/]+$/, "") + "\\.gal-view-saves" : "\u5DE5\u7A0B .gal-view-saves") : "\u5B58\u6863\u6587\u4EF6\u5939\uFF1A\u672A\u6388\u6743" + (dirInfo !== null && dirInfo.projectPath !== "" ? "\uFF08\u5DE5\u7A0B\u8DEF\u5F84\uFF1A" + dirInfo.projectPath + "\uFF09" : ""), dirInfo !== null && dirInfo.mismatch === true ? " \xB7 \u6CE8\u610F\uFF1A\u6388\u6743\u76EE\u5F55\u4E0E\u5F53\u524D\u5DE5\u7A0B\u4E0D\u4E00\u81F4" : ""), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: picking || busy, onClick: pickDir }, picking ? "\u9009\u62E9\u4E2D\u2026" : dirInfo !== null && dirInfo.authorized === true ? "\u91CD\u65B0\u9009\u62E9" : "\u9009\u62E9\u5B58\u6863\u6587\u4EF6\u5939")), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-list" }, index !== null && index.ready === false && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6B63\u5728\u8BFB\u53D6\u5B58\u6863\u76EE\u5F55\u2026"), index !== null && index.ready === true && /* @__PURE__ */ import_react4.default.createElement(import_react4.default.Fragment, null, /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u81EA\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index.autos.length > 0 ? index.autos.map(renderFileSlot) : /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty gv-saves-auto-empty" }, "\u5F53\u524D\u65E0\u81EA\u52A8\u5B58\u6863"), /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group" }, "\u624B\u52A8\u5B58\u6863\uFF08\u6587\u4EF6\uFF09"), index.saves.length === 0 && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u8FD8\u6CA1\u6709\u624B\u52A8\u5B58\u6863"), index.saves.map(renderFileSlot)), index === null && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-empty" }, "\u6587\u4EF6\u5B58\u6863\u4E0D\u53EF\u7528\uFF08\u5F53\u524D\u6D4F\u89C8\u5668\u73AF\u5883\u4E0D\u652F\u6301\uFF09"), hasLegacy && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-group-row" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-group" }, "\u65E7\u5F0F\u5B58\u6863\uFF08\u4F1A\u8BDD\u69FD\uFF09"), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: migrate }, "\u8F6C\u5316\u4E3A\u65B0\u5F0F\u5B58\u6863")), hasLegacy && legacy.autos.length > 0 && renderLegacyRows(legacy.autos, true), hasLegacy && legacy.saves.length > 0 && renderLegacyRows(legacy.saves, false), migrating !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, "\u8FC1\u79FB\u4E2D ", migrating.done, "/", migrating.total, "\u2026\uFF08\u671F\u95F4\u4E0D\u53EF\u64CD\u4F5C\uFF09"), brokenCount > 0 && index !== null && Array.isArray(index.broken) && /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken" }, /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-broken-title" }, brokenCount, " \u4E2A\u6587\u4EF6\u65E0\u6CD5\u8BC6\u522B\uFF08\u4E0D\u662F\u6709\u6548\u7684\u5B58\u6863\u6587\u4EF6\uFF0C\u5DF2\u8DF3\u8FC7\uFF09\uFF1A"), index.broken.map((name2) => /* @__PURE__ */ import_react4.default.createElement("div", { className: "gv-saves-broken-row", key: String(name2) }, /* @__PURE__ */ import_react4.default.createElement("span", { className: "gv-saves-broken-name" }, String(name2)), /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn", disabled: busy, onClick: () => removeBroken(name2) }, "\u5220\u9664"))))), mode === "save" && /* @__PURE__ */ import_react4.default.createElement("button", { type: "button", className: "gv-btn gv-btn-gold gv-saves-create", disabled: busy, onClick: save }, "\u521B\u5EFA\u5B58\u6863"), error !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-error" }, error), notice !== null && /* @__PURE__ */ import_react4.default.createElement("p", { className: "gv-saves-notice" }, notice)));
 }
 function loadSaveIndex(api) {
   try {
@@ -4764,10 +4779,6 @@ function GalView({ useSession, useInput, inputActions, useChat, useScene, useHis
   const [questionControl, setQuestionControl] = (0, import_react4.useState)(null);
   const inputDraft = typeof useInput === "function" ? useInput((s) => s.draft) : void 0;
   const [localDraft, setLocalDraft] = (0, import_react4.useState)("");
-  const setSharedDraft = (0, import_react4.useCallback)((text) => {
-    if (inputActions !== null && inputActions !== void 0 && typeof inputActions.setDraft === "function") inputActions.setDraft(text);
-    else setLocalDraft(text);
-  }, [inputActions]);
   const [type, setType] = (0, import_react4.useState)(createTypeState);
   const [pages, setPages] = (0, import_react4.useState)([]);
   const [pageIndex, setPageIndex] = (0, import_react4.useState)(0);
@@ -5121,11 +5132,10 @@ function GalView({ useSession, useInput, inputActions, useChat, useScene, useHis
   const handleLoaded = (0, import_react4.useCallback)((result) => {
     if (result !== null && typeof result === "object" && result.mode === "inject" && Array.isArray(result.lines)) {
       setRestoredLines(result.lines);
-      if (typeof result.recordText === "string" && result.recordText !== "") setSharedDraft(result.recordText);
     } else {
       setRestoredLines(null);
     }
-  }, [setSharedDraft]);
+  }, []);
   const handleAction = (0, import_react4.useCallback)((action) => {
     const key = String(action ?? "").trim().toLowerCase();
     switch (key) {
@@ -6543,7 +6553,7 @@ function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, connection
         });
         if (!slotResult.ok) return slotResult;
         this.noteSaveOp();
-        return { ok: true, ...slotResult.value };
+        return { ok: true, value: slotResult.value };
       } finally {
         this.unlockSave();
         void this.checkConversationIntegrity();

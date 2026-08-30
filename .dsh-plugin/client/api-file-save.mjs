@@ -453,7 +453,9 @@ export function createFileSaveApi({ sceneSource, sessionsSvc, workspacesSvc, con
         })
         if (!slotResult.ok) return slotResult
         this.noteSaveOp()
-        return { ok: true, ...slotResult.value }
+        // 口径 B1:成功载荷进 value,不摊平——摊平曾让 UI 读 result.value.fallback
+        // 报 "cannot read properties of undefined (reading 'fallback')"(8-30 实测)。
+        return { ok: true, value: slotResult.value }
       } finally {
         this.unlockSave()
         // 操作后检查对话窗口完整性(被官方重装截断时自动恢复)。
